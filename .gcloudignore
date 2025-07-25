@@ -1,0 +1,24 @@
+# Python'a özgü geçici dosyaları yoksay
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Sanal ortam klasörlerini yoksay (eğer kullanıyorsanız)
+.venv/
+venv/
+env/
+
+# Editör ve işletim sistemi dosyalarını yoksay
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Geçici olarak oluşturulmuş olabilecek çıktı dosyalarını yoksay
+# (Bunları buluttan indiririz, tekrar yüklemeye gerek yok)
+*.mp4
+*.wav
+*.srt
+*.png
+*.jpg
