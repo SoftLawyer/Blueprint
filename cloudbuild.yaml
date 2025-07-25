@@ -20,15 +20,14 @@ steps:
     - '--service-account=fabrikam-robotu@videofabrikam.iam.gserviceaccount.com'
     - '--allow-unauthenticated'
     - '--timeout=3600'
-    - '--memory=2Gi'
+    # --- DÜZELTME BURADA: Bellek ayarını kalıcı olarak 4GB yapıyoruz. ---
+    - '--memory=4Gi'
     - '--cpu=1'
 
 # İnşaat bittiğinde, bu imajı sakla
 images:
 - 'gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA'
 
-# HATA ÇÖZÜMÜ: Özel bir servis hesabı (Tetikleyici ayarlarında belirtilen)
-# kullanıldığında, logların nereye yazılacağını belirtmemiz gerekir.
-# Bu ayar, logların standart Cloud Logging servisine yazılmasını sağlar.
+# Log ayarı
 options:
   logging: CLOUD_LOGGING_ONLY
