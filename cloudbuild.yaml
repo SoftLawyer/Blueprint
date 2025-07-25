@@ -26,3 +26,9 @@ steps:
 # İnşaat bittiğinde, bu imajı sakla
 images:
 - 'gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA'
+
+# HATA ÇÖZÜMÜ: Özel bir servis hesabı (Tetikleyici ayarlarında belirtilen)
+# kullanıldığında, logların nereye yazılacağını belirtmemiz gerekir.
+# Bu ayar, logların standart Cloud Logging servisine yazılmasını sağlar.
+options:
+  logging: CLOUD_LOGGING_ONLY
