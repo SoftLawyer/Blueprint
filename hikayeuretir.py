@@ -9,8 +9,8 @@ import os
 API_KEYS = []
 current_api_key_index = 0
 model = None 
-project_id = "videofabrikam" # Bu, ortamdan otomatik alınabilir veya sabit kalabilir.
-TEST_MODE = True
+project_id = "videofabrikam"
+TEST_MODE = True 
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 # Bu fonksiyonlar, yerel dosya işlemleri yerine bulut servislerini kullanır.
@@ -18,6 +18,7 @@ TEST_MODE = True
 def load_api_keys_from_secret_manager():
     """API anahtarlarını tek seferde Secret Manager'dan yükler."""
     global API_KEYS
+    # Anahtarlar zaten yüklendiyse tekrar yükleme
     if API_KEYS: return True
     try:
         client = secretmanager.SecretManagerServiceClient()
@@ -37,18 +38,22 @@ def load_api_keys_from_secret_manager():
 def configure_gemini():
     """Sıradaki API anahtarı ile Gemini'yi yapılandırır. (Orijinal kodunuz)"""
     global current_api_key_index, model
-    if not API_KEYS or current_api_key_index >= len(API_KEYS):
-        return False
+    if not API_KEYS:
+        print("❌ Yapılandırılacak API anahtarı bulunmuyor.")
+        return None
+    if current_api_key_index >= len(API_KEYS):
+        print("❌ Tüm API anahtarları denendi ve hiçbiri çalışmadı.")
+        return None
     try:
         api_key = API_KEYS[current_api_key_index]
-        print(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
+        print(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192}
-        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
-        return True
+        return model
     except Exception as e:
-        print(f"❌ API anahtarı {current_api_key_index + 1} ile hata: {e}")
+        print(f"❌ API anahtarı {current_api_key_index + 1} ile yapılandırma hatası: {e}")
         current_api_key_index += 1
         return configure_gemini()
 
@@ -58,13 +63,21 @@ def generate_with_failover(prompt):
     while current_api_key_index < len(API_KEYS):
         try:
             if model is None:
-                if not configure_gemini(): return None
+                model = configure_gemini()
+                if model is None:
+                    return None
             response = model.generate_content(prompt)
             return response
         except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied) as e:
-            print(f"⚠️ API anahtarı {current_api_key_index + 1} kotaya takıldı. Değiştiriliyor...")
+            print(f"⚠️ API anahtarı {current_api_key_index + 1} kota sınırına ulaştı veya izin reddedildi.")
             current_api_key_index += 1
             model = None
+            print("➡️ Bir sonraki API anahtarı denenecek.")
+        except Exception as e:
+            print(f"❌ Beklenmedik bir API hatası oluştu: {e}")
+            current_api_key_index += 1
+            model = None
+            print("➡️ Bir sonraki API anahtarı denenecek.")
     print("❌ Tüm API anahtarları denendi ancak istek başarılı olamadı.")
     return None
 
@@ -132,8 +145,14 @@ Location: Austin
 Crisis: Data breach affecting major clients
 
 Write ONLY the 4-line profile, nothing else."""
-        response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else None
+        try:
+            response = generate_with_failover(prompt)
+            if response and hasattr(response, 'text'):
+                return response.text.strip()
+            return None
+        except Exception as e:
+            print(f"❌ Profil oluşturma hatası: {str(e)}")
+            return None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
         prompt = f"""Based on this story title: "{story_title}" and the story content, create ONE SINGLE engagement prompt for viewers.
@@ -154,8 +173,14 @@ Requirements:
 - Encourage comments and discussion
 
 Write ONLY ONE prompt that fits this specific story perfectly."""
-        response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else None
+        try:
+            response = generate_with_failover(prompt)
+            if response and hasattr(response, 'text'):
+                return response.text.strip()
+            return None
+        except Exception as e:
+            print(f"❌ Etkileşim mesajı oluşturma hatası: {str(e)}")
+            return None
 
     def generate_opening_section(self, story_title, protagonist_profile):
         prompt = f"""Write ONLY the first section (Dramatic Opening) of a revenge story for storytelling purposes.
@@ -183,8 +208,20 @@ Requirements:
 - Perfect for storytelling/narration format
 
 Write ONLY this opening section - do not continue with other parts of the story."""
-        response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else None
+        try:
+            print(f"🔄 TEST MODU: '{story_title}' için giriş bölümü oluşturuluyor...")
+            response = generate_with_failover(prompt)
+            if response and hasattr(response, 'text'):
+                opening = response.text.strip()
+                word_count = len(opening.split())
+                print(f"✅ Giriş bölümü tamamlandı ({word_count} kelime)")
+                return opening
+            else:
+                print(f"❌ Giriş bölümü oluşturulamadı")
+                return None
+        except Exception as e:
+            print(f"❌ Giriş bölümü oluşturulurken hata: {str(e)}")
+            return None
 
     def generate_story_from_title(self, story_title, protagonist_profile):
         total_words = sum(section["words"] for section in self.story_structure.values())
@@ -216,8 +253,21 @@ REQUIREMENTS:
 - Each section should flow naturally into the next
 
 Write the complete story following this exact structure and word counts."""
-        response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else None
+        try:
+            print(f"🔄 '{story_title}' başlığına göre tam hikaye oluşturuluyor...")
+            print(f"📊 Hedef: {total_words} kelime, 8 bölüm")
+            response = generate_with_failover(prompt)
+            if response and hasattr(response, 'text'):
+                story = response.text.strip()
+                word_count = len(story.split())
+                print(f"✅ Hikaye tamamlandı ({word_count} kelime)")
+                return story
+            else:
+                print(f"❌ Hikaye oluşturulamadı")
+                return None
+        except Exception as e:
+            print(f"❌ Hikaye oluşturulurken hata: {str(e)}")
+            return None
 
     def save_story_to_gcs(self, story, title, protagonist_profile, engagement_prompt, bucket, is_opening_only=False):
         safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')[:50]
@@ -261,7 +311,7 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     
     story_title = generator.get_and_update_next_title(kaynak_bucket)
     if not story_title:
-        return None, None, None
+        return None, None, None, None
 
     generator.save_current_title(story_title, kaynak_bucket)
     print(f"\n📖 İşlenecek başlık: {story_title}")
@@ -280,12 +330,11 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     
     engagement_prompt = generator.generate_single_engagement_prompt(story_title, story_content)
     
-    # Hikayeyi GCS'e kaydet
     generator.save_story_to_gcs(
         story_content, story_title, protagonist_profile, engagement_prompt, 
         bucket=cikti_bucket, 
         is_opening_only=TEST_MODE
     )
     
-    # Sonraki modülün kullanması için ham hikaye metnini, başlığı ve API anahtarlarını döndür
-    return story_content, story_title, API_KEYS
+    # Sonraki modülün kullanması için gerekli tüm bilgileri döndür
+    return story_content, story_title, protagonist_profile, API_KEYS
