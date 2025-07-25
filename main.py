@@ -27,21 +27,23 @@ def handle_request():
     ve tüm video üretim adımlarını sırasıyla yönetir.
     """
     # Her çalıştığında /tmp klasörünü temizleyerek başlayalım
-    # Bu, önceki çalıştırmalardan kalan dosyaların karışmasını önler
     for item in os.listdir('/tmp'):
         item_path = os.path.join('/tmp', item)
-        if os.path.isfile(item_path):
-            os.unlink(item_path)
+        try:
+            if os.path.isfile(item_path):
+                os.unlink(item_path)
+        except Exception as e:
+            print(f"/tmp temizlenirken hata: {e}")
 
     try:
         print("🏭 Fabrika tetiklendi, tam video üretim hattı başlıyor...")
         
         # Adım 1: Hikayeyi Üret
-        story_text, story_title, protagonist_profile, api_keys = run_story_generation_process(KAYNAK_BUCKET_ADI)
+        # --- DÜZELTME BURADA: Eksik olan CIKTI_BUCKET_ADI parametresi eklendi. ---
+        story_text, story_title, protagonist_profile, api_keys = run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
         if not story_text:
             return "İşlem tamamlandı, işlenecek konu yok.", 200
 
-        # Her video için GCS'de benzersiz bir klasör adı oluştur
         safe_folder_name = re.sub(r'[^a-zA-Z0-9_]', '', story_title.replace(' ', '_'))[:50]
         print(f"🗂️ Bu video için GCS klasörü: {safe_folder_name}")
 
@@ -70,7 +72,6 @@ def handle_request():
         print("☁️ Tüm üretilen bileşenler GCS'ye yükleniyor...")
         cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
         
-        # Dosyaları ve hedef yollarını bir sözlükte topla
         files_to_upload = {
             f"{safe_folder_name}/video.mp4": final_video_path,
             f"{safe_folder_name}/ses.wav": audio_path,
