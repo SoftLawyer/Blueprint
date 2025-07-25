@@ -1,0 +1,28 @@
+steps:
+# 1. Adım: Fabrikayı (Docker imajını) inşa et
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA', '.']
+
+# 2. Adım: İnşa edilen fabrikayı depoya (Container Registry) gönder
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA']
+
+# 3. Adım: Fabrikayı Cloud Run'da çalıştır
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'video-fabrikasi-servisi' # Çalışacak servisin adı
+    - '--image=gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA' # Hangi fabrikanın çalışacağı
+    - '--region=europe-west1'
+    # Fabrikanın İÇİNDE çalışacak olan ÖZEL robotumuz:
+    - '--service-account=fabrikam-robotu@videofabrikam.iam.gserviceaccount.com'
+    - '--allow-unauthenticated'
+    - '--timeout=3600'
+    - '--memory=2Gi'
+    - '--cpu=1'
+
+# İnşaat bittiğinde, bu imajı sakla
+images:
+- 'gcr.io/$PROJECT_ID/video-fabrikasi-servisi:$COMMIT_SHA'
