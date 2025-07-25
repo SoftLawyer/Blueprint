@@ -51,3 +51,4 @@ COPY . .
 
 # Adım 10: Uygulamayı çalıştır
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 3600 main:app
+
