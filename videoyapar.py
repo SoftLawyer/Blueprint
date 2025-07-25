@@ -28,11 +28,12 @@ def kahraman_adini_al(protagonist_profile_text):
         for satir in protagonist_profile_text.splitlines():
             if satir.strip().lower().startswith("protagonist:"):
                 icerik = satir.split(":", 1)[1].strip()
-                isim = icerik.split(",")[0].strip().split(" ")[0] # Virgül ve boşlukları temizle
+                # Örnek: "David Sterling, 32" -> "David"
+                isim = icerik.split(",")[0].strip().split(" ")[0]
                 print(f"✅ Kahraman adı profilden okundu: {isim}")
                 return isim.upper()
         print("⚠️ UYARI: Profil metninde 'Protagonist:' satırı bulunamadı.")
-        return "DANIEL"
+        return "DANIEL" # Varsayılan isim
     except Exception as e:
         print(f"❌ Kahraman adı okunurken bir hata oluştu: {e}.")
         return "DANIEL"
@@ -150,7 +151,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             color=(0, 0, 0), duration=video_suresi
         ).set_opacity(0.7).set_position(('center', altyazi_arka_plan_y))
 
-        profil_clip = ImageClip(profile_photo_path, duration=video_suresi).resize(height=PROFIL_FOTO_BOYUT)
+        profil_clip = ImageClip(profile_photo_path, duration=video_suresi, ismask=False).resize(height=PROFIL_FOTO_BOYUT)
         profil_genislik = profil_clip.w
         profil_clip = profil_clip.set_position((PROFIL_FOTO_KONUM_X - profil_genislik / (2 * video_genislik), PROFIL_FOTO_KONUM_Y), relative=True)
         
