@@ -31,9 +31,10 @@ RUN apt-get update && \
     # İndirilen paket listelerini temizle
     rm -rf /var/lib/apt/lists/*
 
-# Adım 3: ImageMagick'in güvenlik politikasını düzenle (Bu, videoyapar hatasını kalıcı olarak çözer)
-# Bu komut, ImageMagick'in metinleri işlemesini engelleyen güvenlik kuralını devre dışı bırakır.
-RUN sed -i 's/<policy domain="path" rights="none" pattern="@\*" \/>/<!-- <policy domain="path" rights="none" pattern="@\*" \/> -->/g' /etc/ImageMagick-6/policy.xml
+# Adım 3: ImageMagick'in güvenlik politikasını düzenle (Nihai Çözüm)
+# Bu komut, geçici dosya işlemlerini engelleyen kuralı bulur ve
+# "none" (hiçbir hak yok) olan iznini "read|write" (okuma|yazma) olarak değiştirir.
+RUN sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
 
 # Adım 4: Yüklenen yeni fontları sisteme tanıt
 RUN fc-cache -f -v
