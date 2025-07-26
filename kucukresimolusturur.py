@@ -1,5 +1,6 @@
 ﻿# kucukresimolusturur.py
 
+from __future__ import annotations
 import json
 import logging
 import sys
@@ -7,9 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 import re
+import os
 
 import google.generativeai as genai
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 # --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ ---
 # Bu kısımlara dokunulmamıştır.
@@ -21,9 +23,9 @@ class ThumbnailStyle:
     bg_primary: tuple[int, int, int] = (15, 15, 25)
     bg_secondary: tuple[int, int, int] = (25, 25, 40)
     text_colour: tuple[int, int, int] = (255, 255, 255)
-    highlight_colour: tuple[int, int, int] = (255, 215, 0)
-    revenge_colour: tuple[int, int, int] = (138, 43, 226)
-    revenge_bg_colour: tuple[int, int, int] = (255, 215, 0)
+    highlight_colour: tuple[int, int, int] = (255, 215, 0)  # Gold
+    revenge_colour: tuple[int, int, int] = (138, 43, 226)  # Blue Violet
+    revenge_bg_colour: tuple[int, int, int] = (255, 215, 0)  # Yellow background for revenge text
     channel_bg: tuple[int, int, int] = (0, 0, 0)
     channel_text: tuple[int, int, int] = (255, 215, 0)
     channel_border: tuple[int, int, int] = (255, 215, 0)
@@ -64,10 +66,8 @@ def count_words(text: str) -> int:
     return len(re.sub(r'\*', '', text).split())
 
 def ask_gemini(prompt: str, api_keys: list[str]) -> Mapping[str, str] | None:
-    """API anahtarlarını listeden kullanarak Gemini'ye istek gönderir."""
-    # Not: Bu fonksiyon artık hikayeuretir.py'deki failover mantığını kullanmıyor,
-    # çünkü API anahtarları zaten merkezi olarak yönetiliyor.
-    # Gerekirse failover mantığı buraya da eklenebilir.
+    # API anahtarları artık merkezi olarak yönetildiği için failover mantığına gerek yok,
+    # hikayeuretir modülü zaten çalışan bir anahtar buldu.
     key_to_use = api_keys[0] if api_keys else None
     if not key_to_use:
         logger.error("Thumbnail metni üretmek için Gemini API anahtarı bulunamadı.")
@@ -142,15 +142,14 @@ class ThumbnailCanvas:
             self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
 
     def _load_fonts(self) -> None:
-        # Fontları bulut ortamında bulmaya çalışır, bulamazsa varsayılanı kullanır.
-        # Dockerfile'a fontları eklemek en garantili yoldur.
         font_options = [
-            Path("impact.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
-            Path("arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf")
+            self.style.font_path, Path("impact.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
+            Path("arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
         ]
         font_loaded = False
         for font_path in font_options:
-            if font_path.exists():
+            if os.path.exists(font_path):
                 try:
                     self.font_title = ImageFont.truetype(str(font_path), self.current_title_size)
                     self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size)
@@ -161,83 +160,242 @@ class ThumbnailCanvas:
                     break
                 except (IOError, OSError): continue
         if not font_loaded:
-            logger.warning("Using default font - install Impact.ttf/Arial.ttf in Dockerfile for better results")
+            logger.warning("Using default font")
             self.font_title, self.font_normal, self.font_revenge, self.font_channel = (ImageFont.load_default(),)*4
 
-    # _text_width, _text_height, _calculate_total_height_needed, _adjust_for_perfect_fill,
-    # _draw_text_with_outline, _wrap_text_smart, _draw_highlighted_text_line,
-    # _draw_revenge_text_with_background_bottom, _draw_profile_section ve diğer tüm
-    # alt fonksiyonlarınız buraya SİZİN ORİJİNAL KODUNUZDAKİ GİBİ EKLENMELİDİR.
-    # Örnek olarak bir tanesi:
     def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
-        bbox = self.draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0]
-    
-    # ... (Diğer tüm _helper fonksiyonlarınız buraya gelecek) ...
-
-    def compose(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, profile_pic_path: str) -> None:
-        # Bu fonksiyon sizin orijinal, karmaşık compose mantığınızı içermelidir.
-        # Örnek olarak basitleştirilmiş bir yapı:
-        logger.info("Composing thumbnail...")
-        
-        # Gerçek compose mantığınız burada olmalı.
-        # Örneğin:
-        # profile_width = self._draw_profile_section(profile_pic_path, CHANNEL_NAME)
-        # text_area_width = self.style.width - profile_width - ...
-        # self._adjust_for_perfect_fill(...)
-        # ...
-        
-        # Basit bir örnek çizim
-        self.draw.text((50, 50), main_hook, font=self.font_title, fill=self.style.text_colour)
-        self.draw.text((50, 200), setup, font=self.font_normal, fill=self.style.text_colour)
-        
         try:
-            profile_img = Image.open(profile_pic_path)
-            self.image.paste(profile_img, (self.style.width - 200, 0))
-        except Exception as e:
-            logger.error(f"Profil fotoğrafı yapıştırılamadı: {e}")
+            return font.getlength(text)
+        except AttributeError:
+            bbox = self.draw.textbbox((0, 0), text, font=font)
+            return bbox[2] - bbox[0]
+
+    def _text_height(self, font: ImageFont.FreeTypeFont) -> int:
+        bbox = font.getbbox("Ag")
+        return bbox[3] - bbox[1]
+
+    def _calculate_total_height_needed(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int) -> int:
+        total_height = self.style.top_margin
+        hook_lines = self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width)
+        total_height += len(hook_lines) * (self._text_height(self.font_title) + self.current_line_spacing)
+        total_height += self.current_section_spacing
+        setup_lines = self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width)
+        total_height += len(setup_lines) * (self._text_height(self.font_normal) + self.current_line_spacing)
+        total_height += self.current_section_spacing
+        if extra_detail:
+            extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width)
+            total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing)
+            total_height += self.current_section_spacing
+        total_height += self.style.bottom_margin
+        return total_height
+
+    def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
+        revenge_area_height = 100
+        target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height
+        max_attempts = 30
+        
+        scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0
+        spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
+        
+        self._scale_sizes(scale_factor)
+        self._scale_spacing(spacing_factor)
+        self._clamp_and_reload_fonts()
+
+        for attempt in range(max_attempts):
+            current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width)
+            height_ratio = current_height / target_height
+            if 0.98 <= height_ratio <= 1.02:
+                logger.info("✓ Perfect screen fill achieved!")
+                break
+            if height_ratio < 0.98:
+                if self._can_increase_sizes():
+                    self._scale_sizes(min(1.06, (1.0 / height_ratio)))
+                else:
+                    self._scale_spacing(1.08)
+            elif height_ratio > 1.02:
+                self._scale_sizes(max(0.94, (1.0 / height_ratio)))
+            self._clamp_and_reload_fonts()
+
+    def _can_increase_sizes(self) -> bool:
+        return (self.current_title_size < self.style.max_title_font_size or
+                self.current_normal_size < self.style.max_normal_font_size or
+                self.current_revenge_size < self.style.max_revenge_font_size)
+
+    def _scale_sizes(self, factor: float) -> None:
+        self.current_title_size = int(self.current_title_size * factor)
+        self.current_normal_size = int(self.current_normal_size * factor)
+        self.current_revenge_size = int(self.current_revenge_size * factor)
+
+    def _scale_spacing(self, factor: float) -> None:
+        self.current_line_spacing = int(self.current_line_spacing * factor)
+        self.current_section_spacing = int(self.current_section_spacing * factor)
+
+    def _clamp_and_reload_fonts(self):
+        self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size))
+        self.current_normal_size = max(self.style.min_normal_font_size, min(self.style.max_normal_font_size, self.current_normal_size))
+        self.current_revenge_size = max(self.style.min_revenge_font_size, min(self.style.max_revenge_font_size, self.current_revenge_size))
+        self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing))
+        self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing))
+        self._load_fonts()
+
+    def _draw_text_with_outline(self, pos, text, font, fill_color, outline_color=None, outline_width=None):
+        x, y = pos
+        outline_color = outline_color or self.style.text_stroke_color
+        outline_width = outline_width or max(3, int(font.size / 30))
+        self.draw.text((x, y), text, font=font, fill=fill_color, stroke_width=outline_width, stroke_fill=outline_color)
+
+    def _wrap_text_smart(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list:
+        parts, current, in_highlight = [], "", False
+        for char in text:
+            if char == '*':
+                if current: parts.append((current, in_highlight))
+                current, in_highlight = "", not in_highlight
+            else:
+                current += char
+        if current: parts.append((current, in_highlight))
+        
+        lines, current_line_parts, current_line_width = [], [], 0
+        for part_text, is_highlighted in parts:
+            for word in part_text.split():
+                word_width = self._text_width(word + " ", font)
+                if current_line_width + word_width > max_width and current_line_parts:
+                    lines.append(current_line_parts)
+                    current_line_parts, current_line_width = [], 0
+                current_line_parts.append((word, is_highlighted))
+                current_line_width += word_width
+        if current_line_parts: lines.append(current_line_parts)
+        return lines
+
+    def _draw_highlighted_text_line(self, line_parts, pos, font):
+        x, y = pos
+        for word, is_highlighted in line_parts:
+            color = self.style.highlight_colour if is_highlighted else self.style.text_colour
+            self._draw_text_with_outline((x, y), word, font, color)
+            x += self._text_width(word + " ", font)
+
+    def _draw_revenge_text_with_background_bottom(self, text: str, profile_width: int) -> None:
+        available_width = self.style.width - profile_width - (self.style.left_margin * 2)
+        revenge_text = text.upper()
+        best_font_size = self.style.min_revenge_font_size
+        for font_size in range(400, self.style.min_revenge_font_size - 1, -2):
+            try:
+                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
+                if self._text_width(revenge_text, test_font) <= available_width - 20:
+                    best_font_size = font_size
+                    break
+            except (IOError, OSError): continue
+        
+        revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
+        text_width = self._text_width(revenge_text, revenge_font)
+        text_height = self._text_height(revenge_font)
+        padding = 20
+        bg_height = text_height + (padding * 2)
+        bg_y = self.style.height - bg_height - 15
+        bg_x = self.style.left_margin
+        
+        bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0))
+        bg_draw = ImageDraw.Draw(bg_img)
+        bg_draw.rounded_rectangle([0, 0, available_width, bg_height], radius=15, fill=(*self.style.revenge_bg_colour, 240))
+        self.image.paste(bg_img, (bg_x, bg_y), bg_img)
+        
+        text_x = bg_x + (available_width - text_width) // 2
+        text_y = bg_y + padding
+        self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour, outline_color=(0, 0, 0), outline_width=4)
+
+    def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
+        try:
+            avatar = Image.open(img_path).convert("RGBA")
+        except FileNotFoundError:
+            avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
+        
+        target_width, target_height = 200, 720
+        avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        x = self.style.width - target_width
+        self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
+
+        channel_text = channel_name.upper()
+        best_channel_font_size = self.style.min_channel_font_size
+        padding = 15
+        for font_size in range(40, self.style.min_channel_font_size - 1, -2):
+            try:
+                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
+                if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2):
+                    best_channel_font_size = font_size
+                    break
+            except (IOError, OSError): continue
+            
+        channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
+        text_width = self._text_width(channel_text, channel_font)
+        text_height = self._text_height(channel_font)
+        box_height = text_height + (padding * 2)
+        box_width = target_width - 20
+        box_y = target_height - box_height - 25
+        box_x = x + 10
+        
+        box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
+        box_draw = ImageDraw.Draw(box_img)
+        box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230))
+        box_draw.rounded_rectangle([1, 1, box_width-1, box_height-1], radius=12, outline=(*self.style.channel_border, 255), width=3)
+        self.image.paste(box_img, (box_x, box_y), box_img)
+        
+        text_x = box_x + (box_width - text_width) // 2
+        text_y = box_y + padding
+        self._draw_text_with_outline((text_x, text_y), channel_text, channel_font, self.style.channel_text, outline_color=(0, 0, 0), outline_width=2)
+        
+        return target_width
+
+    def compose(self, main_hook, setup, revenge_line, extra_detail, profile_pic_path):
+        profile_width = self._draw_profile_section(profile_pic_path, CHANNEL_NAME)
+        text_area_width = self.style.width - profile_width - self.style.left_margin - self.style.right_margin
+        total_words = sum(count_words(t) for t in [main_hook, setup, revenge_line, extra_detail])
+        self._adjust_for_perfect_fill(main_hook, setup, revenge_line, extra_detail, text_area_width, total_words)
+        
+        revenge_area_height = 100
+        total_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width)
+        available_height = self.style.height - self.style.bottom_margin - revenge_area_height
+        y = max(self.style.top_margin, (available_height - total_height) // 2)
+
+        for line_parts in self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width):
+            self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_title)
+            y += self._text_height(self.font_title) + self.current_line_spacing
+        y += self.current_section_spacing
+        
+        for line_parts in self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width):
+            self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal)
+            y += self._text_height(self.font_normal) + self.current_line_spacing
+        y += self.current_section_spacing
+        
+        if extra_detail:
+            for line_parts in self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width):
+                self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal)
+                y += self._text_height(self.font_normal) + self.current_line_spacing
+        
+        self._draw_revenge_text_with_background_bottom(revenge_line, profile_width)
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir, api_keys):
-    """
-    Bu ana fonksiyon, main.py tarafından çağrılır ve tüm süreci yönetir.
-    Sizin orijinal generate_thumbnail ve cli mantığınızı korur.
-    """
     print("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı ---")
     
     parts = None
     max_retries = 3
     for attempt in range(max_retries):
-        logger.info(f"Attempt {attempt + 1}/{max_retries} to generate thumbnail text...")
         current_parts = ask_gemini(build_prompt(story_text), api_keys)
-        if current_parts is None:
-            logger.error("AI analysis failed.")
-            continue
-        
+        if current_parts is None: continue
         total_words = sum(count_words(v) for v in current_parts.values())
-        logger.info(f"Gemini response word count: {total_words}")
-
         if 80 <= total_words <= 100:
             parts = current_parts
-            logger.info("Successfully generated text within the target word count.")
             break
-        else:
-            logger.warning(f"Word count {total_words} is outside target range (80-100). Retrying...")
-
     if parts is None:
-        raise Exception(f"Failed to generate text within target word count after {max_retries} attempts.")
+        raise Exception("Hedef kelime sayısında metin üretilemedi.")
     
     canvas = ThumbnailCanvas(STYLE)
-    
-    # Geçici profil fotoğrafı yolunu Path objesine çevir
-    profile_path_obj = Path(profile_photo_path)
     
     canvas.compose(
         main_hook=parts.get("MAIN_HOOK", ""),
         setup=parts.get("SETUP", ""),
         revenge_line=parts.get("REVENGE_LINE", ""),
-        extra_detail=parts.tget("EXTRA_DETAIL", ""),
-        profile_pic_path=profile_path_obj,
+        extra_detail=parts.get("EXTRA_DETAIL", ""),
+        profile_pic_path=profile_photo_path,
     )
     
     thumbnail_path = os.path.join(output_dir, "kucuk_resim.png")
