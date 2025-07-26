@@ -32,9 +32,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Adım 3: ImageMagick'in güvenlik politikasını düzenle (Nihai Çözüm)
-# Bu komut, geçici dosya işlemlerini engelleyen kuralı bulur ve
-# bir XML yorumu haline getirerek tamamen devre dışı bırakır.
-RUN sed -i 's/<policy domain="path" rights="none" pattern="@\*" \/>/<!-- <policy domain="path" rights="none" pattern="@\*" \/> -->/g' /etc/ImageMagick-6/policy.xml
+# Bu komut, güvenlik dosyasındaki TÜM "rights="none"" ifadelerini
+# "rights="read|write"" olarak değiştirerek sorunu kökünden çözer.
+RUN sed -i 's/rights="none"/rights="read|write"/g' /etc/ImageMagick-6/policy.xml
 
 # Adım 4: Yüklenen yeni fontları sisteme tanıt
 RUN fc-cache -f -v
