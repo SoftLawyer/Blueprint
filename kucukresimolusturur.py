@@ -14,8 +14,6 @@ import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 # --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ ---
-# Bu kısımlara dokunulmamıştır.
-
 @dataclass(frozen=True)
 class ThumbnailStyle:
     width: int = 1280
@@ -23,9 +21,9 @@ class ThumbnailStyle:
     bg_primary: tuple[int, int, int] = (15, 15, 25)
     bg_secondary: tuple[int, int, int] = (25, 25, 40)
     text_colour: tuple[int, int, int] = (255, 255, 255)
-    highlight_colour: tuple[int, int, int] = (255, 215, 0)  # Gold
-    revenge_colour: tuple[int, int, int] = (138, 43, 226)  # Blue Violet
-    revenge_bg_colour: tuple[int, int, int] = (255, 215, 0)  # Yellow background for revenge text
+    highlight_colour: tuple[int, int, int] = (255, 215, 0)
+    revenge_colour: tuple[int, int, int] = (138, 43, 226)
+    revenge_bg_colour: tuple[int, int, int] = (255, 215, 0)
     channel_bg: tuple[int, int, int] = (0, 0, 0)
     channel_text: tuple[int, int, int] = (255, 215, 0)
     channel_border: tuple[int, int, int] = (255, 215, 0)
@@ -60,21 +58,19 @@ CHANNEL_NAME = "REVENGE WITH DAVID"
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s", stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
-# --- YARDIMCI FONKSİYONLAR (Bulut için düzenlendi) ---
+# --- YARDIMCI FONKSİYONLAR ---
 
 def count_words(text: str) -> int:
     return len(re.sub(r'\*', '', text).split())
 
 def ask_gemini(prompt: str, api_keys: list[str]) -> Mapping[str, str] | None:
-    # API anahtarları artık merkezi olarak yönetildiği için failover mantığına gerek yok,
-    # hikayeuretir modülü zaten çalışan bir anahtar buldu.
     key_to_use = api_keys[0] if api_keys else None
     if not key_to_use:
         logger.error("Thumbnail metni üretmek için Gemini API anahtarı bulunamadı.")
         return None
     try:
         genai.configure(api_key=key_to_use)
-        model = genai.GenerativeModel("gemini-1.5-pro-latest") # Model adı sizin kodunuzdan alındı.
+        model = genai.GenerativeModel("gemini-2.5-pro")
         response = model.generate_content(prompt)
         txt = response.text.strip().removeprefix("```json").removesuffix("```").strip()
         return json.loads(txt)
@@ -83,7 +79,6 @@ def ask_gemini(prompt: str, api_keys: list[str]) -> Mapping[str, str] | None:
     return None
 
 def build_prompt(story: str) -> str:
-    # Sizin Orijinal Prompt'unuz
     return f"""
 Analyze this revenge story and create compelling YouTube thumbnail text with a TOTAL WORD COUNT between 80 and 100 words.
 
@@ -118,7 +113,6 @@ Ensure total word count is 80-100 words with maximum dramatic impact.
 """.strip()
 
 # --- SİZİN ORİJİNAL THUMBNAILCANVAS SINIFINIZ ---
-# Bu sınıfa ve içindeki tüm detaylı mantığa HİÇ dokunulmamıştır.
 class ThumbnailCanvas:
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
         self.style = style
@@ -164,8 +158,7 @@ class ThumbnailCanvas:
             self.font_title, self.font_normal, self.font_revenge, self.font_channel = (ImageFont.load_default(),)*4
 
     def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
-        try:
-            return font.getlength(text)
+        try: return font.getlength(text)
         except AttributeError:
             bbox = self.draw.textbbox((0, 0), text, font=font)
             return bbox[2] - bbox[0]

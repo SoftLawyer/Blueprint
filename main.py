@@ -1,6 +1,5 @@
 # main.py
 
-
 import os
 import traceback
 from flask import Flask
@@ -27,7 +26,6 @@ def handle_request():
     Bu ana fonksiyon, dışarıdan bir istek geldiğinde tetiklenir
     ve tüm video üretim adımlarını sırasıyla yönetir.
     """
-    # Her çalıştığında /tmp klasörünü temizleyerek başlayalım
     for item in os.listdir('/tmp'):
         item_path = os.path.join('/tmp', item)
         try:
@@ -40,7 +38,6 @@ def handle_request():
         print("🏭 Fabrika tetiklendi, tam video üretim hattı başlıyor...")
         
         # Adım 1: Hikayeyi Üret
-        # --- DÜZELTME BURADA: Eksik olan CIKTI_BUCKET_ADI parametresi eklendi. ---
         story_text, story_title, protagonist_profile, api_keys = run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
         if not story_text:
             return "İşlem tamamlandı, işlenecek konu yok.", 200
