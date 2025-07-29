@@ -1,7 +1,6 @@
 # hikayeuretir.py
 
 
-
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
