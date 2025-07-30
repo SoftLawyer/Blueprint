@@ -4,6 +4,7 @@ import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
 import os
+import time
 
 # --- Global Değişkenler (Sizin orijinalinizdeki gibi) ---
 API_KEYS = []
@@ -45,7 +46,7 @@ def configure_gemini():
         print(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192}
-        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -293,6 +294,7 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
 
     storage_client = storage.Client()
     kaynak_bucket = storage_client.bucket(kaynak_bucket_adi)
+    cikti_bucket = storage_client.bucket(cikti_bucket_adi)
     
     generator = YouTubeRevengeStoryGenerator()
     
