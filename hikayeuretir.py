@@ -1,6 +1,5 @@
 # hikayeuretir.py
 
-
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
@@ -11,7 +10,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None 
 project_id = "videofabrikam"
-TEST_MODE = False
+TEST_MODE = False # Tam hikaye üretimi için bunu False yapın
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 # Bu fonksiyonlar, yerel dosya işlemleri yerine bulut servislerini kullanır.
