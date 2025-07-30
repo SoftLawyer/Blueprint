@@ -10,7 +10,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None 
 project_id = "videofabrikam"
-TEST_MODE = True 
+TEST_MODE = False
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 # Bu fonksiyonlar, yerel dosya işlemleri yerine bulut servislerini kullanır.
