@@ -1,6 +1,5 @@
 # hikayeuretir.py
 
-
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
@@ -46,7 +45,7 @@ def configure_gemini():
         print(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192}
-        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -286,7 +285,7 @@ Write the complete story following this exact structure and word counts."""
         return "\n".join(content_parts)
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
-def run_story_generation_process(kaynak_bucket_adi):
+def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     """Bu ana fonksiyon, main.py tarafından çağrılır ve tüm süreci yönetir."""
     print("--- Hikaye Üretim Modülü Başlatıldı ---")
     if not load_api_keys_from_secret_manager():
