@@ -36,7 +36,7 @@ def handle_request():
         # --- TÜM BAŞLIKLARI İŞLEYEN ANA DÖNGÜ ---
         while True:
             print("\n" + "="*50)
-            print(f"🔄 DÖNGÜ {processed_videos_count + 1} BAŞLIYOR...")
+            print(f"� DÖNGÜ {processed_videos_count + 1} BAŞLIYOR...")
             print("="*50)
 
             # Her çalıştığında /tmp klasörünü temizleyerek başlayalım
@@ -48,8 +48,8 @@ def handle_request():
                 except Exception as e:
                     print(f"/tmp temizlenirken hata: {e}")
             
-            # Adım 1: Hikayeyi Üret
-            story_text, story_title, protagonist_profile, api_keys = run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
+            # Adım 1: Hikayeyi Üret. Bu fonksiyon artık 5 değer döndürecek.
+            story_text, story_title, protagonist_profile, api_keys, formatted_story_text = run_story_generation_process(KAYNAK_BUCKET_ADI)
             
             # Eğer işlenecek başlık kalmadıysa, döngüyü sonlandır.
             if not story_text:
@@ -59,6 +59,12 @@ def handle_request():
             # Her video için GCS'de benzersiz bir klasör adı oluştur
             safe_folder_name = re.sub(r'[^a-zA-Z0-9_]', '', story_title.replace(' ', '_'))[:50]
             print(f"🗂️ Bu video için GCS klasörü: {safe_folder_name}")
+
+            # Adım 1.5: Üretilen formatlı hikaye metnini geçici dosyaya yaz
+            hikaye_path = "/tmp/hikaye.txt"
+            with open(hikaye_path, "w", encoding="utf-8") as f:
+                f.write(formatted_story_text)
+            print(f"  -> Hikaye metni geçici olarak '{hikaye_path}' dosyasına yazıldı.")
 
             # Adım 2: Sesi ve Altyazıyı Oluştur
             audio_path, srt_path = run_audio_and_srt_process(story_text, "/tmp", api_keys)
@@ -76,7 +82,8 @@ def handle_request():
             bg_video_path = "/tmp/arkaplan.mp4"
             bg_video_blob.download_to_filename(bg_video_path)
             
-            if not os.path.exists(bg_video_path) or os.path.getsize(bg_video_path) < 1024:
+            # HATA ÖNLEME: İndirilen dosyanın geçerli olup olmadığını kontrol et
+            if not os.path.exists(bg_video_path) or os.path.getsize(bg_video_path) < 1024: # 1KB'dan küçükse bozuktur
                 raise Exception(f"arkaplan.mp4 dosyası GCS'den indirilemedi veya bozuk.")
             print("  -> arkaplan.mp4 başarıyla indirildi ve doğrulandı.")
             
@@ -89,17 +96,13 @@ def handle_request():
             print("☁️ Tüm üretilen bileşenler GCS'ye yükleniyor...")
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
             
-            hikaye_path = "/tmp/hikaye.txt"
-            with open(hikaye_path, "w", encoding="utf-8") as f:
-                f.write(protagonist_profile + "\n\n" + story_text)
-            
             files_to_upload = {
                 f"{safe_folder_name}/video.mp4": final_video_path,
                 f"{safe_folder_name}/ses.wav": audio_path,
                 f"{safe_folder_name}/altyazi.srt": srt_path,
                 f"{safe_folder_name}/kucuk_resim.png": thumbnail_path,
                 f"{safe_folder_name}/profil_foto.png": final_profile_photo_path,
-                f"{safe_folder_name}/hikaye.txt": hikaye_path,
+                f"{safe_folder_name}/hikaye.txt": hikaye_path, # <-- YENİ EKLENDİ
             }
 
             for gcs_path, local_path in files_to_upload.items():
@@ -126,3 +129,4 @@ def handle_request():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+�
