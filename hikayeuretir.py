@@ -1,6 +1,5 @@
 # hikayeuretir.py
 
-
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
@@ -46,7 +45,7 @@ def configure_gemini():
         print(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192}
-        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -266,11 +265,10 @@ Write the complete story following this exact structure and word counts."""
             print(f"❌ Hikaye oluşturulurken hata: {str(e)}")
             return None
 
-    def save_story_to_gcs(self, story, title, protagonist_profile, engagement_prompt, bucket, is_opening_only=False):
-        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')[:50]
-        prefix = "opening" if is_opening_only else "hikaye"
-        filename = f"{prefix}_{safe_title}.txt"
-        
+    def format_story_for_saving(self, story, title, protagonist_profile, engagement_prompt, is_opening_only=False):
+        """
+        Hikayeyi GCS'e kaydetmek yerine, formatlanmış metin olarak döndürür.
+        """
         content_parts = ["="*60, f"YOUTUBE REVENGE STORY ({'OPENING SECTION - ' if is_opening_only else ''}FICTIONAL)", "="*60,
                          f"\nTitle: {title}", "Note: All names, companies, and events are completely fictional.\n",
                          "PROTAGONIST PROFILE:", "-"*30, protagonist_profile, "-"*30 + "\n"]
@@ -284,17 +282,10 @@ Write the complete story following this exact structure and word counts."""
         if engagement_prompt:
             content_parts.extend(["\n\n" + "-"*40 + "\n\n", "VIEWER ENGAGEMENT:", engagement_prompt])
 
-        final_content_to_save = "\n".join(content_parts)
-
-        try:
-            blob = bucket.blob(f"hikayeler/{filename}")
-            blob.upload_from_string(final_content_to_save, content_type="text/plain; charset=utf-8")
-            print(f"\n💾 Hikaye '{filename}' dosyasına GCS'de kaydedildi!")
-        except Exception as e:
-            print(f"❌ Dosya kaydetme hatası: {str(e)}")
+        return "\n".join(content_parts)
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
-def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
+def run_story_generation_process(kaynak_bucket_adi):
     """Bu ana fonksiyon, main.py tarafından çağrılır ve tüm süreci yönetir."""
     print("--- Hikaye Üretim Modülü Başlatıldı ---")
     if not load_api_keys_from_secret_manager():
@@ -302,13 +293,12 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
 
     storage_client = storage.Client()
     kaynak_bucket = storage_client.bucket(kaynak_bucket_adi)
-    cikti_bucket = storage_client.bucket(cikti_bucket_adi)
     
     generator = YouTubeRevengeStoryGenerator()
     
     story_title = generator.get_and_update_next_title(kaynak_bucket)
     if not story_title:
-        return None, None, None, None
+        return None, None, None, None, None
 
     generator.save_current_title(story_title, kaynak_bucket)
     print(f"\n📖 İşlenecek başlık: {story_title}")
@@ -327,12 +317,14 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     
     engagement_prompt = generator.generate_single_engagement_prompt(story_title, story_content)
     
-    # Hikayeyi GCS'e kaydet
-    generator.save_story_to_gcs(
+    # Hikayeyi GCS'e kaydetmek yerine, formatlanmış metni al
+    formatted_text = generator.format_story_for_saving(
         story_content, story_title, protagonist_profile, engagement_prompt, 
-        bucket=cikti_bucket, 
         is_opening_only=TEST_MODE
     )
-    
+
+    if not formatted_text:
+        raise Exception("Hikaye metni formatlanamadı.")
+
     # Sonraki modülün kullanması için gerekli tüm bilgileri döndür
-    return story_content, story_title, protagonist_profile, API_KEYS
+    return story_content, story_title, protagonist_profile, API_KEYS, formatted_text
