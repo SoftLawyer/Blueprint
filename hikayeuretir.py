@@ -105,21 +105,85 @@ class YouTubeRevengeStoryGenerator:
             print(f"❌ Mevcut başlık GCS'e kaydedilirken hata oluştu: {e}")
 
     def generate_protagonist_profile(self, story_title):
-        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
+        prompt = f"""Based on this story title: "{story_title}"
+
+Create a protagonist profile in this EXACT format:
+
+Protagonist: [FICTIONAL First Name Last Name], [age 42-58]
+Company: [FICTIONAL Company Name] ([industry type])
+Location: [US City]
+Crisis: [Brief description of the main crisis/conflict]
+
+Requirements:
+- ALL names must be completely FICTIONAL
+- The Protagonist must only be an American male
+- Choose appropriate industry based on the title
+- Age between 42-58
+- US location that fits the story
+- Crisis should match the title's theme
+- Keep it concise - one line each
+
+Example format:
+Protagonist: George Chen, 45
+Company: TechFlow Systems (software)
+Location: Austin
+Crisis: Data breach affecting major clients
+
+Write ONLY the 4-line profile, nothing else."""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
-        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
+        prompt = f"""Based on this story title: "{story_title}" and the story content, create ONE SINGLE engagement prompt for viewers.
+
+Choose ONE of these types:
+1. A specific question asking "What would you do?"
+2. An invitation to share similar experiences in comments
+3. A moral/ethical question about the situation
+4. A request for advice/opinions from viewers
+
+Requirements:
+- Write ONLY ONE engagement prompt
+- Make it specific to this story's theme
+- Use casual, conversational tone
+- Include 1-2 relevant emojis
+- Keep it engaging for video viewers
+- Make it feel natural and authentic
+- Encourage comments and discussion
+
+Write ONLY ONE prompt that fits this specific story perfectly."""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_opening_section(self, story_title, protagonist_profile):
-        prompt = f"""Write ONLY the first section (Dramatic Opening)... (Sizin Orijinal Prompt'unuz)"""
+        prompt = f"""Write ONLY the first section (Dramatic Opening) of a revenge story for storytelling purposes.
+
+STORY TITLE: "{story_title}"
+
+PROTAGONIST PROFILE:
+{protagonist_profile}
+
+SECTION 1: DRAMATIC OPENING (~180 words)
+- Start with dramatic dialogue or action that hooks the listener
+- Use the protagonist's name and company from the profile
+- Set the tone for a revenge/justice story
+- Create immediate tension or conflict
+- Use authentic storytelling style perfect for narration
+- Make it compelling and engaging for audio/video content
+
+Requirements:
+- Approximately 180 words
+- Dramatic dialogue or action
+- Hook the audience immediately
+- Set up the conflict
+- Match the title's theme and protagonist profile
+- Use the FICTIONAL names from the profile
+- Perfect for storytelling/narration format
+
+Write ONLY this opening section - do not continue with other parts of the story."""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
-    # --- YENİ VE GÜÇLENDİRİLMİŞ HİKAYE ÜRETME FONKSİYONU ---
     def generate_story_from_title(self, story_title, protagonist_profile):
         """Hikayeyi bölüm bölüm oluşturur."""
         print(f"🔄 '{story_title}' başlığına göre tam hikaye BÖLÜM BÖLÜM oluşturuluyor...")
@@ -166,7 +230,7 @@ CRITICAL REQUIREMENTS:
                 full_story_parts.append(section_text)
                 story_so_far += section_text + "\n\n"
                 print(f"  ✅ Bölüm {i} tamamlandı ({len(section_text.split())} kelime).")
-                time.sleep(5) # API'yi yormamak için bölümler arasında bekle
+                time.sleep(5)
             else:
                 print(f"  ❌ Bölüm {i} oluşturulamadı! Hikaye üretimi durduruluyor.")
                 return None
