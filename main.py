@@ -36,7 +36,7 @@ def handle_request():
         # --- TÜM BAŞLIKLARI İŞLEYEN ANA DÖNGÜ ---
         while True:
             print("\n" + "="*50)
-            print(f"� DÖNGÜ {processed_videos_count + 1} BAŞLIYOR...")
+            print(f"🔄 DÖNGÜ {processed_videos_count + 1} BAŞLIYOR...")
             print("="*50)
 
             # Her çalıştığında /tmp klasörünü temizleyerek başlayalım
@@ -102,7 +102,7 @@ def handle_request():
                 f"{safe_folder_name}/altyazi.srt": srt_path,
                 f"{safe_folder_name}/kucuk_resim.png": thumbnail_path,
                 f"{safe_folder_name}/profil_foto.png": final_profile_photo_path,
-                f"{safe_folder_name}/hikaye.txt": hikaye_path, # <-- YENİ EKLENDİ
+                f"{safe_folder_name}/hikaye.txt": hikaye_path,
             }
 
             for gcs_path, local_path in files_to_upload.items():
@@ -129,4 +129,3 @@ def handle_request():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-�
