@@ -49,7 +49,8 @@ def handle_request():
                     print(f"/tmp temizlenirken hata: {e}")
             
             # Adım 1: Hikayeyi Üret. Bu fonksiyon artık 5 değer döndürecek.
-            story_text, story_title, protagonist_profile, api_keys, formatted_story_text = run_story_generation_process(KAYNAK_BUCKET_ADI)
+            # --- DÜZELTME BURADA: Eksik olan CIKTI_BUCKET_ADI parametresi eklendi. ---
+            story_text, story_title, protagonist_profile, api_keys, formatted_story_text = run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
             
             # Eğer işlenecek başlık kalmadıysa, döngüyü sonlandır.
             if not story_text:
