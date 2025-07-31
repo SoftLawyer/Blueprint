@@ -3,16 +3,16 @@
 import os
 import requests
 import json
+import time
 import wave
 import base64
 import whisper
-import time
 
-# --- Sabitler ---
+# --- Sabitler (Sizin orijinal kodunuzdan) ---
 SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 4500 
 
-# --- Yardımcı Fonksiyonlar ---
+# --- Yardımcı Fonksiyonlar (Sizin orijinal kodunuzdan, buluta uyarlandı) ---
 
 def split_text(text, max_length=API_CHUNK_SIZE):
     """Metni, kelimeleri bölmemeye çalışarak API sınırlarına uygun parçalara böler."""
@@ -27,93 +27,72 @@ def split_text(text, max_length=API_CHUNK_SIZE):
     chunks.append(text)
     return chunks
 
-def make_api_request_with_retry(url, data, headers, chunk_num, max_retries=3, timeout=180):
-    """API isteğini tekrar deneme mekanizması ile yapar."""
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(url, json=data, timeout=timeout, headers=headers)
-            
-            # ZIRHLI GÜNCELLEME: Cevabın JSON olup olmadığını kontrol et
-            try:
-                result = response.json()
-            except json.JSONDecodeError:
-                print(f"  ❌ Parça {chunk_num} işlenirken JSON parse hatası (Deneme {attempt + 1}/{max_retries}). Sunucu cevabı:")
-                # Cevabın ilk 200 karakterini göstererek hatanın ne olduğunu anla
-                print(f"     -> HTTP {response.status_code}, Cevap: {response.text[:200]}") 
-                sleep_time = (2 ** attempt)
-                print(f"     -> {sleep_time} saniye sonra tekrar denenecek...")
-                time.sleep(sleep_time)
-                continue
-
-            # JSON parse edildiyse normal akışa devam et
-            if response.status_code == 200:
-                if 'audioContent' in result:
-                    print(f"  ✅ Parça {chunk_num} başarıyla sese çevrildi.")
-                    return base64.b64decode(result['audioContent'])
-                else:
-                    print(f"  ❌ Parça {chunk_num} için yanıtta ses verisi bulunamadı.")
-                    return None
-            
-            error_msg = result.get('error', {}).get('message', f"HTTP {response.status_code}")
-            print(f"  ❌ Parça {chunk_num} işlenirken API Hatası (Deneme {attempt + 1}/{max_retries}): {error_msg}")
-
-            if response.status_code in [500, 503, 429]:
-                sleep_time = (2 ** attempt)
-                print(f"     -> Sunucu hatası, {sleep_time} saniye sonra tekrar denenecek...")
-                time.sleep(sleep_time)
-                continue
-            else:
-                return None
-
-        except requests.exceptions.RequestException as e:
-            print(f"  ❌ Parça {chunk_num} işlenirken Ağ Hatası (Deneme {attempt + 1}/{max_retries}): {e}")
-            sleep_time = (2 ** attempt)
-            print(f"     -> {sleep_time} saniye sonra tekrar denenecek...")
-            time.sleep(sleep_time)
-
-    print(f"  ❌ Parça {chunk_num} tüm denemelere rağmen başarısız oldu.")
-    return None
+def test_api_key(api_key, key_number):
+    """API anahtarını test eder."""
+    try:
+        print(f"🔍 TTS API anahtarı {key_number} test ediliyor...")
+        test_url = f"https://texttospeech.googleapis.com/v1/voices?key={api_key}"
+        response = requests.get(test_url, timeout=15)
+        if response.status_code == 200:
+            print(f"✅ TTS API anahtarı {key_number} geçerli")
+            return True
+        else:
+            error_details = response.json().get('error', {}).get('message', 'Bilinmeyen Hata')
+            print(f"❌ TTS API anahtarı {key_number} geçersiz (HTTP {response.status_code}): {error_details}")
+            return False
+    except Exception as e:
+        print(f"❌ TTS API anahtarı {key_number} test edilirken hata: {e}")
+        return False
 
 def text_to_speech_chirp3_only(text, api_keys):
     """Metni parçalara ayırır, Chirp3-HD-Enceladus sesi ile sese çevirir ve birleştirir."""
-    if not api_keys:
-        print("❌ HATA: Ses üretimi için API anahtarı bulunamadı!")
+    print("🔍 TTS API anahtarları test ediliyor...")
+    valid_keys = [(i, key) for i, key in enumerate(api_keys, 1) if test_api_key(key, i)]
+    
+    if not valid_keys:
+        print("❌ HATA: Hiçbir geçerli TTS API anahtarı bulunamadı!")
         return None
     
+    print(f"✅ {len(valid_keys)} geçerli API anahtarı bulundu")
     print("🎵 SADECE en-US-Chirp3-HD-Enceladus sesi kullanılacak!")
-    text_chunks = split_text(text)
-    if not text_chunks:
-        print("⚠️ Seslendirilecek metin boş, işlem atlanıyor.")
-        return b''
 
+    text_chunks = split_text(text)
     print(f"ℹ️ Metin, API'ye gönderilmek üzere {len(text_chunks)} parçaya ayrıldı.")
 
-    for key_index, api_key in enumerate(api_keys):
-        print(f"\n🔄 API anahtarı {key_index + 1}/{len(api_keys)} ile tüm metin deneniyor...")
+    for key_number, api_key in valid_keys:
+        print(f"\n🔄 API anahtarı {key_number} ile tüm metin deneniyor...")
         combined_audio_content = b''
         all_chunks_successful = True
         
-        for i, chunk in enumerate(text_chunks, 1):
-            url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
-            data = {
-                "input": {"text": chunk},
-                "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
-                "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.95, "sampleRateHertz": SAMPLE_RATE}
-            }
+        try:
+            for i, chunk in enumerate(text_chunks, 1):
+                print(f"  ➡️ Parça {i}/{len(text_chunks)} işleniyor...")
+                url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
+                data = {
+                    "input": {"text": chunk},
+                    "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
+                    "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.95, "sampleRateHertz": SAMPLE_RATE}
+                }
+                
+                response = requests.post(url, json=data, timeout=90, headers={'Content-Type': 'application/json'})
+                
+                if response.status_code == 200 and 'audioContent' in response.json():
+                    combined_audio_content += base64.b64decode(response.json()['audioContent'])
+                else:
+                    error_msg = response.json().get('error', {}).get('message', f"HTTP {response.status_code}")
+                    print(f"  ❌ Parça {i} işlenirken API Hatası: {error_msg}")
+                    all_chunks_successful = False
+                    break
             
-            audio_chunk = make_api_request_with_retry(url, data, {'Content-Type': 'application/json'}, i)
-            
-            if audio_chunk:
-                combined_audio_content += audio_chunk
+            if all_chunks_successful:
+                print(f"✅ API anahtarı {key_number} ile tüm parçalar başarıyla sese çevrildi!")
+                return combined_audio_content
             else:
-                all_chunks_successful = False
-                break
-        
-        if all_chunks_successful:
-            print(f"✅ API anahtarı {key_index + 1} ile tüm parçalar başarıyla sese çevrildi!")
-            return combined_audio_content
-        else:
-            print(f"⏭️ Bu anahtar başarısız oldu, sonraki API anahtarı denenecek...")
+                print(f"⏭️ Sonraki API anahtarı deneniyor...")
+                continue
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ API anahtarı {key_number}: Ağ hatası - {e}")
             continue
     
     print("\n❌ HATA: Tüm API anahtarları denendi ve ses oluşturulamadı!")
@@ -146,7 +125,7 @@ def generate_synchronized_srt(audio_file_path, output_dir):
         print("\n🤖 Whisper modeli yükleniyor...")
         model = whisper.load_model("base") 
         print(f"🎤 '{os.path.basename(audio_file_path)}' dosyası deşifre ediliyor...")
-        result = model.transcribe(audio_file_path, fp16=False) 
+        result = model.transcribe(audio_file_path, fp16=False, language="en") 
 
         srt_content = []
         for i, segment in enumerate(result['segments'], 1):
