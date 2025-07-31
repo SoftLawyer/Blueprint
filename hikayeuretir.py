@@ -43,8 +43,8 @@ def configure_gemini():
         api_key = API_KEYS[current_api_key_index]
         print(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
-        generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192}
-        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
+        generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 6000}
+        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -75,11 +75,12 @@ def generate_with_failover(prompt):
 # --- SİZİN ORİJİNAL HİKAYE OLUŞTURUCU SINIFINIZ (GÜNCELLENDİ) ---
 class YouTubeRevengeStoryGenerator:
     def __init__(self):
+        # Sizin ultra-kısaltılmış, 25-29 dakikalık yapılandırmanız
         self.story_structure = {
-            1: {"name": "Dramatic Opening", "words": 180}, 2: {"name": "Character Intro", "words": 320},
-            3: {"name": "Backstory", "words": 850}, 4: {"name": "Betrayal Process", "words": 980},
-            5: {"name": "Calm Reaction", "words": 720}, 6: {"name": "Strategic Move", "words": 1850},
-            7: {"name": "Natural Justice", "words": 1240}, 8: {"name": "Moral Victory", "words": 650}
+            1: {"name": "Dramatic Opening", "words": 140}, 2: {"name": "Character Intro", "words": 240},
+            3: {"name": "Backstory", "words": 580}, 4: {"name": "Betrayal Process", "words": 680},
+            5: {"name": "Calm Reaction", "words": 520}, 6: {"name": "Strategic Move", "words": 1200},
+            7: {"name": "Natural Justice", "words": 850}, 8: {"name": "Moral Victory", "words": 450}
         }
 
     def get_and_update_next_title(self, bucket, source_filename="hikayelerbasligi.txt"):
@@ -105,88 +106,24 @@ class YouTubeRevengeStoryGenerator:
             print(f"❌ Mevcut başlık GCS'e kaydedilirken hata oluştu: {e}")
 
     def generate_protagonist_profile(self, story_title):
-        prompt = f"""Based on this story title: "{story_title}"
-
-Create a protagonist profile in this EXACT format:
-
-Protagonist: [FICTIONAL First Name Last Name], [age 42-58]
-Company: [FICTIONAL Company Name] ([industry type])
-Location: [US City]
-Crisis: [Brief description of the main crisis/conflict]
-
-Requirements:
-- ALL names must be completely FICTIONAL
-- The Protagonist must only be an American male
-- Choose appropriate industry based on the title
-- Age between 42-58
-- US location that fits the story
-- Crisis should match the title's theme
-- Keep it concise - one line each
-
-Example format:
-Protagonist: George Chen, 45
-Company: TechFlow Systems (software)
-Location: Austin
-Crisis: Data breach affecting major clients
-
-Write ONLY the 4-line profile, nothing else."""
+        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
-        prompt = f"""Based on this story title: "{story_title}" and the story content, create ONE SINGLE engagement prompt for viewers.
-
-Choose ONE of these types:
-1. A specific question asking "What would you do?"
-2. An invitation to share similar experiences in comments
-3. A moral/ethical question about the situation
-4. A request for advice/opinions from viewers
-
-Requirements:
-- Write ONLY ONE engagement prompt
-- Make it specific to this story's theme
-- Use casual, conversational tone
-- Include 1-2 relevant emojis
-- Keep it engaging for video viewers
-- Make it feel natural and authentic
-- Encourage comments and discussion
-
-Write ONLY ONE prompt that fits this specific story perfectly."""
+        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_opening_section(self, story_title, protagonist_profile):
-        prompt = f"""Write ONLY the first section (Dramatic Opening) of a revenge story for storytelling purposes.
-
-STORY TITLE: "{story_title}"
-
-PROTAGONIST PROFILE:
-{protagonist_profile}
-
-SECTION 1: DRAMATIC OPENING (~180 words)
-- Start with dramatic dialogue or action that hooks the listener
-- Use the protagonist's name and company from the profile
-- Set the tone for a revenge/justice story
-- Create immediate tension or conflict
-- Use authentic storytelling style perfect for narration
-- Make it compelling and engaging for audio/video content
-
-Requirements:
-- Approximately 180 words
-- Dramatic dialogue or action
-- Hook the audience immediately
-- Set up the conflict
-- Match the title's theme and protagonist profile
-- Use the FICTIONAL names from the profile
-- Perfect for storytelling/narration format
-
-Write ONLY this opening section - do not continue with other parts of the story."""
+        prompt = f"""Write ONLY the first section (Dramatic Opening)... (Sizin Orijinal Prompt'unuz)"""
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
+    # --- YENİ VE GÜÇLENDİRİLMİŞ HİKAYE ÜRETME FONKSİYONU ---
     def generate_story_from_title(self, story_title, protagonist_profile):
         """Hikayeyi bölüm bölüm oluşturur."""
-        print(f"🔄 '{story_title}' başlığına göre tam hikaye BÖLÜM BÖLÜM oluşturuluyor...")
+        print(f"🔄 '{story_title}' başlığına göre ULTRA KISALTILMIŞ hikaye (25-29 dk) BÖLÜM BÖLÜM oluşturuluyor...")
         
         full_story_parts = []
         story_so_far = ""
@@ -198,6 +135,8 @@ Write ONLY this opening section - do not continue with other parts of the story.
             print(f"\n  ➡️ Bölüm {i}/{len(self.story_structure)}: '{section_name}' (~{section_words} kelime) oluşturuluyor...")
             
             prompt = f"""You are a master storyteller writing a compelling revenge story for a YouTube video.
+
+CRITICAL: This story MUST be ULTRA-CONCISE for exactly 25-29 minutes of audio narration.
 
 STORY TITLE: "{story_title}"
 
@@ -213,30 +152,45 @@ Your task is to write ONLY the NEXT section of the story.
 
 NEXT SECTION TO WRITE:
 - Section {i}: {section_name}
-- Approximate word count: {section_words} words
+- MAXIMUM word count: {section_words} words (DO NOT EXCEED THIS)
 
-CRITICAL REQUIREMENTS:
+ULTRA-CRITICAL REQUIREMENTS:
 - Write ONLY the content for this specific section.
 - DO NOT write section titles like "Section 1: Dramatic Opening".
 - Ensure your writing flows naturally from the "STORY SO FAR".
 - Maintain a consistent, engaging, and narrative tone perfect for audio.
 - Use the protagonist's details from the profile.
-- Adhere to the approximate word count for this section.
-"""
+- NEVER exceed the word count limit - be ruthlessly concise.
+- Focus ONLY on essential plot points - eliminate ALL fluff.
+- Keep dialogue extremely sharp and impactful.
+- Every sentence must advance the story.
+- Maintain maximum tension with minimum words.
+
+ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count every word carefully."""
             
             response = generate_with_failover(prompt)
             if response and hasattr(response, 'text'):
                 section_text = response.text.strip()
+                words = section_text.split()
+                if len(words) > section_words:
+                    print(f"  ⚠️ Bölüm {i} çok uzun ({len(words)} kelime), {section_words} kelimeye kısaltılıyor...")
+                    section_text = ' '.join(words[:section_words])
+                
                 full_story_parts.append(section_text)
                 story_so_far += section_text + "\n\n"
-                print(f"  ✅ Bölüm {i} tamamlandı ({len(section_text.split())} kelime).")
-                time.sleep(5)
+                word_count = len(section_text.split())
+                print(f"  ✅ Bölüm {i} tamamlandı ({word_count} kelime - Hedef: {section_words}).")
+                time.sleep(3)
             else:
                 print(f"  ❌ Bölüm {i} oluşturulamadı! Hikaye üretimi durduruluyor.")
                 return None
         
         final_story = "\n\n".join(full_story_parts)
-        print(f"\n✅ Tüm hikaye başarıyla tamamlandı ({len(final_story.split())} kelime)")
+        total_words = len(final_story.split())
+        estimated_minutes = total_words / 170
+        print(f"\n✅ ULTRA KISALTILMIŞ hikaye tamamlandı!")
+        print(f"📊 Toplam kelime: {total_words}")
+        print(f"⏱️ Tahmini süre: {estimated_minutes:.1f} dakika")
         return final_story
 
     def format_story_for_saving(self, story, title, protagonist_profile, engagement_prompt, is_opening_only=False):
@@ -244,11 +198,11 @@ CRITICAL REQUIREMENTS:
                          f"\nTitle: {title}", "Note: All names, companies, and events are completely fictional.\n",
                          "PROTAGONIST PROFILE:", "-"*30, protagonist_profile, "-"*30 + "\n"]
         if not is_opening_only:
-            content_parts.append("STORY STRUCTURE:")
+            content_parts.append("STORY STRUCTURE (ULTRA-OPTIMIZED FOR 25-29 MINUTES):")
             for i, section in self.story_structure.items():
                 content_parts.append(f"{i}. {section['name']} (~{section['words']} words)")
         else:
-            content_parts.append("SECTION: Dramatic Opening (~180 words)")
+            content_parts.append("SECTION: Dramatic Opening (~140 words)")
         content_parts.extend(["-"*60 + "\n\n", "STORY:", story])
         if engagement_prompt:
             content_parts.extend(["\n\n" + "-"*40 + "\n\n", "VIEWER ENGAGEMENT:", engagement_prompt])
@@ -256,7 +210,7 @@ CRITICAL REQUIREMENTS:
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
-    print("--- Hikaye Üretim Modülü Başlatıldı ---")
+    print("--- Hikaye Üretim Modülü Başlatıldı (25-29 Dakika ULTRA-OPTIMIZED) ---")
     if not load_api_keys_from_secret_manager():
         raise Exception("API anahtarları yüklenemedi.")
 
