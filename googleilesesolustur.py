@@ -2,6 +2,7 @@
 
 import os
 import requests
+import json
 import wave
 import base64
 import whisper
@@ -31,8 +32,21 @@ def make_api_request_with_retry(url, data, headers, chunk_num, max_retries=3, ti
     for attempt in range(max_retries):
         try:
             response = requests.post(url, json=data, timeout=timeout, headers=headers)
-            if response.status_code == 200:
+            
+            # ZIRHLI GÜNCELLEME: Cevabın JSON olup olmadığını kontrol et
+            try:
                 result = response.json()
+            except json.JSONDecodeError:
+                print(f"  ❌ Parça {chunk_num} işlenirken JSON parse hatası (Deneme {attempt + 1}/{max_retries}). Sunucu cevabı:")
+                # Cevabın ilk 200 karakterini göstererek hatanın ne olduğunu anla
+                print(f"     -> HTTP {response.status_code}, Cevap: {response.text[:200]}") 
+                sleep_time = (2 ** attempt)
+                print(f"     -> {sleep_time} saniye sonra tekrar denenecek...")
+                time.sleep(sleep_time)
+                continue
+
+            # JSON parse edildiyse normal akışa devam et
+            if response.status_code == 200:
                 if 'audioContent' in result:
                     print(f"  ✅ Parça {chunk_num} başarıyla sese çevrildi.")
                     return base64.b64decode(result['audioContent'])
@@ -40,18 +54,15 @@ def make_api_request_with_retry(url, data, headers, chunk_num, max_retries=3, ti
                     print(f"  ❌ Parça {chunk_num} için yanıtta ses verisi bulunamadı.")
                     return None
             
-            # API'den gelen spesifik hata mesajını logla
-            error_msg = response.json().get('error', {}).get('message', f"HTTP {response.status_code}")
+            error_msg = result.get('error', {}).get('message', f"HTTP {response.status_code}")
             print(f"  ❌ Parça {chunk_num} işlenirken API Hatası (Deneme {attempt + 1}/{max_retries}): {error_msg}")
 
-            # Tekrar denenebilir hatalar (örn: sunucu meşgul)
             if response.status_code in [500, 503, 429]:
-                sleep_time = (2 ** attempt) # 1, 2, 4 saniye bekle
+                sleep_time = (2 ** attempt)
                 print(f"     -> Sunucu hatası, {sleep_time} saniye sonra tekrar denenecek...")
                 time.sleep(sleep_time)
                 continue
             else:
-                # Tekrar denemenin anlamsız olduğu hatalar (örn: geçersiz anahtar)
                 return None
 
         except requests.exceptions.RequestException as e:
@@ -65,7 +76,6 @@ def make_api_request_with_retry(url, data, headers, chunk_num, max_retries=3, ti
 
 def text_to_speech_chirp3_only(text, api_keys):
     """Metni parçalara ayırır, Chirp3-HD-Enceladus sesi ile sese çevirir ve birleştirir."""
-    # API anahtarı testi kaldırıldı, çünkü failover mantığı zaten geçersiz anahtarları atlayacak.
     if not api_keys:
         print("❌ HATA: Ses üretimi için API anahtarı bulunamadı!")
         return None
@@ -74,7 +84,7 @@ def text_to_speech_chirp3_only(text, api_keys):
     text_chunks = split_text(text)
     if not text_chunks:
         print("⚠️ Seslendirilecek metin boş, işlem atlanıyor.")
-        return b'' # Boş bir byte string döndürerek hatayı önle
+        return b''
 
     print(f"ℹ️ Metin, API'ye gönderilmek üzere {len(text_chunks)} parçaya ayrıldı.")
 
@@ -97,7 +107,7 @@ def text_to_speech_chirp3_only(text, api_keys):
                 combined_audio_content += audio_chunk
             else:
                 all_chunks_successful = False
-                break # Bu anahtar ile bir parça başarısız oldu, sonraki anahtarı dene
+                break
         
         if all_chunks_successful:
             print(f"✅ API anahtarı {key_index + 1} ile tüm parçalar başarıyla sese çevrildi!")
