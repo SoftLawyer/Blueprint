@@ -5,16 +5,19 @@ import requests
 import wave
 import base64
 import whisper
+import time
 
-# --- Sabitler (Sizin orijinal kodunuzdan) ---
+# --- Sabitler ---
 SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 4500 
 
-# --- Yardımcı Fonksiyonlar (Sizin orijinal kodunuzdan, buluta uyarlandı) ---
+# --- Yardımcı Fonksiyonlar ---
 
 def split_text(text, max_length=API_CHUNK_SIZE):
     """Metni, kelimeleri bölmemeye çalışarak API sınırlarına uygun parçalara böler."""
     chunks = []
+    if not text or not text.strip():
+        return chunks
     while len(text) > max_length:
         split_pos = text.rfind(' ', 0, max_length)
         if split_pos == -1: split_pos = max_length
@@ -23,83 +26,84 @@ def split_text(text, max_length=API_CHUNK_SIZE):
     chunks.append(text)
     return chunks
 
-def test_api_key(api_key, key_number):
-    """API anahtarını test eder."""
-    try:
-        print(f"🔍 TTS API anahtarı {key_number} test ediliyor...")
-        test_url = f"https://texttospeech.googleapis.com/v1/voices?key={api_key}"
-        response = requests.get(test_url, timeout=15)
-        if response.status_code == 200:
-            print(f"✅ TTS API anahtarı {key_number} geçerli")
-            return True
-        else:
-            # Hata mesajını daha detaylı yazdır
-            error_details = response.json().get('error', {}).get('message', 'Bilinmeyen Hata')
-            print(f"❌ TTS API anahtarı {key_number} geçersiz (HTTP {response.status_code}): {error_details}")
-            return False
-    except Exception as e:
-        print(f"❌ TTS API anahtarı {key_number} test edilirken hata: {e}")
-        return False
+def make_api_request_with_retry(url, data, headers, chunk_num, max_retries=3, timeout=180):
+    """API isteğini tekrar deneme mekanizması ile yapar."""
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=data, timeout=timeout, headers=headers)
+            if response.status_code == 200:
+                result = response.json()
+                if 'audioContent' in result:
+                    print(f"  ✅ Parça {chunk_num} başarıyla sese çevrildi.")
+                    return base64.b64decode(result['audioContent'])
+                else:
+                    print(f"  ❌ Parça {chunk_num} için yanıtta ses verisi bulunamadı.")
+                    return None
+            
+            # API'den gelen spesifik hata mesajını logla
+            error_msg = response.json().get('error', {}).get('message', f"HTTP {response.status_code}")
+            print(f"  ❌ Parça {chunk_num} işlenirken API Hatası (Deneme {attempt + 1}/{max_retries}): {error_msg}")
+
+            # Tekrar denenebilir hatalar (örn: sunucu meşgul)
+            if response.status_code in [500, 503, 429]:
+                sleep_time = (2 ** attempt) # 1, 2, 4 saniye bekle
+                print(f"     -> Sunucu hatası, {sleep_time} saniye sonra tekrar denenecek...")
+                time.sleep(sleep_time)
+                continue
+            else:
+                # Tekrar denemenin anlamsız olduğu hatalar (örn: geçersiz anahtar)
+                return None
+
+        except requests.exceptions.RequestException as e:
+            print(f"  ❌ Parça {chunk_num} işlenirken Ağ Hatası (Deneme {attempt + 1}/{max_retries}): {e}")
+            sleep_time = (2 ** attempt)
+            print(f"     -> {sleep_time} saniye sonra tekrar denenecek...")
+            time.sleep(sleep_time)
+
+    print(f"  ❌ Parça {chunk_num} tüm denemelere rağmen başarısız oldu.")
+    return None
 
 def text_to_speech_chirp3_only(text, api_keys):
     """Metni parçalara ayırır, Chirp3-HD-Enceladus sesi ile sese çevirir ve birleştirir."""
-    print("🔍 TTS API anahtarları test ediliyor...")
-    valid_keys = [(i, key) for i, key in enumerate(api_keys, 1) if test_api_key(key, i)]
-    
-    if not valid_keys:
-        print("❌ HATA: Hiçbir geçerli TTS API anahtarı bulunamadı!")
+    # API anahtarı testi kaldırıldı, çünkü failover mantığı zaten geçersiz anahtarları atlayacak.
+    if not api_keys:
+        print("❌ HATA: Ses üretimi için API anahtarı bulunamadı!")
         return None
     
-    print(f"✅ {len(valid_keys)} geçerli API anahtarı bulundu")
     print("🎵 SADECE en-US-Chirp3-HD-Enceladus sesi kullanılacak!")
-
     text_chunks = split_text(text)
+    if not text_chunks:
+        print("⚠️ Seslendirilecek metin boş, işlem atlanıyor.")
+        return b'' # Boş bir byte string döndürerek hatayı önle
+
     print(f"ℹ️ Metin, API'ye gönderilmek üzere {len(text_chunks)} parçaya ayrıldı.")
 
-    for key_number, api_key in valid_keys:
-        print(f"\n🔄 API anahtarı {key_number} ile tüm metin deneniyor...")
+    for key_index, api_key in enumerate(api_keys):
+        print(f"\n🔄 API anahtarı {key_index + 1}/{len(api_keys)} ile tüm metin deneniyor...")
         combined_audio_content = b''
         all_chunks_successful = True
         
-        try:
-            for i, chunk in enumerate(text_chunks, 1):
-                print(f"  ➡️ Parça {i}/{len(text_chunks)} işleniyor...")
-                url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
-                data = {
-                    "input": {"text": chunk},
-                    "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
-                    "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.95, "sampleRateHertz": SAMPLE_RATE}
-                }
-                
-                response = requests.post(url, json=data, timeout=90, headers={'Content-Type': 'application/json'})
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if 'audioContent' in result:
-                        combined_audio_content += base64.b64decode(result['audioContent'])
-                        print(f"  ✅ Parça {i} başarıyla sese çevrildi.")
-                    else:
-                        print(f"  ❌ Parça {i} için yanıtta ses verisi bulunamadı.")
-                        all_chunks_successful = False
-                        break
-                else:
-                    error_msg = response.json().get('error', {}).get('message', f"HTTP {response.status_code}")
-                    print(f"  ❌ Parça {i} işlenirken API Hatası: {error_msg}")
-                    all_chunks_successful = False
-                    break
+        for i, chunk in enumerate(text_chunks, 1):
+            url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
+            data = {
+                "input": {"text": chunk},
+                "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
+                "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.95, "sampleRateHertz": SAMPLE_RATE}
+            }
             
-            if all_chunks_successful:
-                print(f"✅ API anahtarı {key_number} ile tüm parçalar başarıyla sese çevrildi!")
-                return combined_audio_content
+            audio_chunk = make_api_request_with_retry(url, data, {'Content-Type': 'application/json'}, i)
+            
+            if audio_chunk:
+                combined_audio_content += audio_chunk
             else:
-                print(f"⏭️ Sonraki API anahtarı deneniyor...")
-                continue
-                
-        except requests.exceptions.Timeout:
-            print(f"⏰ API anahtarı {key_number}: İstek zaman aşımına uğradı.")
-            continue
-        except Exception as e:
-            print(f"❌ API anahtarı {key_number}: Beklenmeyen hata - {e}")
+                all_chunks_successful = False
+                break # Bu anahtar ile bir parça başarısız oldu, sonraki anahtarı dene
+        
+        if all_chunks_successful:
+            print(f"✅ API anahtarı {key_index + 1} ile tüm parçalar başarıyla sese çevrildi!")
+            return combined_audio_content
+        else:
+            print(f"⏭️ Bu anahtar başarısız oldu, sonraki API anahtarı denenecek...")
             continue
     
     print("\n❌ HATA: Tüm API anahtarları denendi ve ses oluşturulamadı!")
@@ -158,7 +162,7 @@ def run_audio_and_srt_process(story_text, output_dir, api_keys_list):
     print("--- Ses ve Senkronize Altyazı Üretim Modülü Başlatıldı ---")
     
     audio_content = text_to_speech_chirp3_only(story_text, api_keys_list)
-    if not audio_content:
+    if audio_content is None:
         raise Exception("Ses içeriği üretilemedi.")
     
     audio_file_path = save_audio(audio_content, output_dir)
