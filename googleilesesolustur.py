@@ -20,14 +20,37 @@ def extract_target_sections(text):
     try:
         print("🔍 STORY: ve VIEWER ENGAGEMENT: bölümleri aranıyor...")
         
-        # STORY: bölümünü bul
-        story_match = re.search(r'STORY:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)', text, re.DOTALL | re.IGNORECASE)
+        # DEBUG: Metnin başını kontrol et
+        print(f"📋 Metin başlangıcı (ilk 200 karakter):")
+        print(repr(text[:200]))
         
-        # VIEWER ENGAGEMENT: bölümünü bul
-        engagement_match = re.search(r'VIEWER ENGAGEMENT:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)', text, re.DOTALL | re.IGNORECASE)
+        # DAHA ESNEK REGEX PATTERN'LER
+        # STORY: bölümünü bul - daha esnek pattern
+        story_patterns = [
+            r'STORY:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)',
+            r'STORY:\s*\r?\n(.*?)(?=\r?\n\s*[-]{5,}|\r?\n\s*VIEWER ENGAGEMENT:|\Z)',
+            r'STORY:\s*(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)',
+            r'(?i)story:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*viewer engagement:|\Z)'
+        ]
+        
+        # VIEWER ENGAGEMENT: bölümünü bul - daha esnek pattern
+        engagement_patterns = [
+            r'VIEWER ENGAGEMENT:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)',
+            r'VIEWER ENGAGEMENT:\s*\r?\n(.*?)(?=\r?\n\s*[-]{5,}|\Z)',
+            r'VIEWER ENGAGEMENT:\s*(.*?)(?=\n\s*[-]{5,}|\Z)',
+            r'(?i)viewer engagement:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)'
+        ]
         
         extracted_text = ""
         sections_found = 0
+        
+        # STORY bölümünü ara
+        story_match = None
+        for pattern in story_patterns:
+            story_match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if story_match:
+                print(f"✅ STORY bulundu - Pattern: {pattern[:50]}...")
+                break
         
         if story_match:
             story_content = story_match.group(1).strip()
@@ -39,6 +62,23 @@ def extract_target_sections(text):
                 print("⚠️ STORY bölümü boş")
         else:
             print("❌ STORY bölümü bulunamadı")
+            # DEBUG: Metinde STORY kelimesi var mı?
+            if "STORY:" in text.upper():
+                print("🔍 DEBUG: STORY: kelimesi metinde mevcut, regex problemi olabilir")
+                # Manuel arama yap
+                story_index = text.upper().find("STORY:")
+                if story_index != -1:
+                    print(f"📍 STORY: pozisyonu: {story_index}")
+                    print(f"📋 STORY çevresindeki metin:")
+                    print(repr(text[story_index-20:story_index+100]))
+        
+        # VIEWER ENGAGEMENT bölümünü ara
+        engagement_match = None
+        for pattern in engagement_patterns:
+            engagement_match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if engagement_match:
+                print(f"✅ VIEWER ENGAGEMENT bulundu - Pattern: {pattern[:50]}...")
+                break
         
         if engagement_match:
             engagement_content = engagement_match.group(1).strip()
@@ -50,10 +90,20 @@ def extract_target_sections(text):
                 print("⚠️ VIEWER ENGAGEMENT bölümü boş")
         else:
             print("❌ VIEWER ENGAGEMENT bölümü bulunamadı")
+            # DEBUG
+            if "VIEWER ENGAGEMENT:" in text.upper():
+                print("🔍 DEBUG: VIEWER ENGAGEMENT: kelimesi metinde mevcut")
+                engagement_index = text.upper().find("VIEWER ENGAGEMENT:")
+                if engagement_index != -1:
+                    print(f"📍 VIEWER ENGAGEMENT: pozisyonu: {engagement_index}")
+                    print(f"📋 VIEWER ENGAGEMENT çevresindeki metin:")
+                    print(repr(text[engagement_index-20:engagement_index+100]))
         
         if sections_found == 0:
             print("❌ Hiçbir hedef bölüm bulunamadı!")
-            return None
+            print("🔍 FALLBACK: Tüm metni kullanacağım...")
+            # Son çare: tüm metni kullan
+            return text.strip()
         
         extracted_text = extracted_text.strip()
         print(f"✅ Toplam {sections_found} bölüm çıkarıldı ({len(extracted_text)} karakter)")
@@ -62,7 +112,8 @@ def extract_target_sections(text):
         
     except Exception as e:
         print(f"❌ Bölüm çıkarma hatası: {e}")
-        return None
+        print("🔍 FALLBACK: Tüm metni kullanacağım...")
+        return text.strip()
 
 def fix_long_sentences(text):
     """Uzun cümleleri doğal noktalarda böler"""
