@@ -1,163 +1,212 @@
-import os
-import io
-import tempfile
-from flask import Flask, request, jsonify, send_file
-from PIL import Image, ImageDraw, ImageFont
-import cv2
-import numpy as np
+# main.py - Video Fabrikası Orkestra Şefi
+# Bu dosya, tüm video üretim sürecini baştan sona yönetir.
 
+import os
+import logging
+import traceback
+import tempfile
+import shutil
+from flask import Flask, request, jsonify
+from google.cloud import storage
+
+# --- Kendi modüllerimizi import edelim ---
+# Her modül, üretim bandının bir aşamasından sorumludur.
+import hikayeuretir
+import googleilesesolustur
+import profilfotoolusturur
+import profilfotonunarkasinisiler
+import videoyapar
+import kucukresimolusturur
+
+# --- TEMEL AYARLAR ---
+# Loglama yapılandırması (Cloud Run loglarında görmek için)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Google Cloud Storage bucket isimleri
+KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
+CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
+
+# Flask uygulamasını başlat
 app = Flask(__name__)
 
-class VideoFabrikasi:
-    def __init__(self):
-        # 720p çözünürlük
-        self.width = 1280
-        self.height = 720
-        self.fps = 30
-        
-        # Tek font yükle
-        self.fonts = self._load_fonts()
-    
-    def _load_fonts(self):
-        """Liberation Sans font yükle - cache yok"""
-        font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-        
-        try:
-            if os.path.exists(font_path):
-                return {
-                    "bold": ImageFont.truetype(font_path, 28),      # 720p için
-                    "regular": ImageFont.truetype(font_path, 20),   # 720p için
-                    "small": ImageFont.truetype(font_path, 16)
-                }
-        except Exception as e:
-            print(f"Font yükleme hatası: {e}")
-        
-        # Fallback - default font
-        return {
-            "bold": ImageFont.load_default(),
-            "regular": ImageFont.load_default(), 
-            "small": ImageFont.load_default()
-        }
-    
-    def _wrap_text(self, text, font, max_width):
-        """Metni satırlara böl - 720p için optimize"""
-        words = text.split()
-        lines = []
-        current_line = []
-        
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = font.getbbox(test_line)
-            text_width = bbox[2] - bbox[0]
-            
-            if text_width <= max_width:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
-                else:
-                    lines.append(word)
-        
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        return lines
-    
-    def create_video_frame(self, text, frame_number, total_frames):
-        """720p video frame oluştur"""
-        # 720p canvas
-        frame = Image.new('RGB', (self.width, self.height), color='#1a1a1a')
-        draw = ImageDraw.Draw(frame)
-        
-        # 720p için pozisyonlar
-        margin_x = 80
-        margin_y = 60
-        content_width = self.width - (2 * margin_x)
-        
-        # Text wrapping
-        lines = self._wrap_text(text, self.fonts["regular"], content_width)
-        
-        # Başlangıç Y pozisyonu
-        start_y = margin_y + 50
-        line_height = 35  # 720p için
-        
-        # Her satırı çiz
-        for i, line in enumerate(lines):
-            y_pos = start_y + (i * line_height)
-            
-            # Ekran sınırları içinde mi kontrol et
-            if y_pos < self.height - margin_y:
-                draw.text((margin_x, y_pos), line, 
-                         font=self.fonts["regular"], 
-                         fill='white')
-        
-        # PIL Image'ı OpenCV formatına çevir
-        frame_cv = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
-        return frame_cv
-    
-    def create_video(self, text, duration=10):
-        """720p video oluştur"""
-        total_frames = duration * self.fps
-        
-        # Geçici video dosyası
-        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
-            temp_path = temp_file.name
-        
-        # Video writer - 720p
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(temp_path, fourcc, self.fps, (self.width, self.height))
-        
-        try:
-            # Frame'leri oluştur
-            for frame_num in range(total_frames):
-                frame = self.create_video_frame(text, frame_num, total_frames)
-                out.write(frame)
-            
-            out.release()
-            return temp_path
-            
-        except Exception as e:
-            out.release()
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise e
+# --- ÜRETİM BANDINI YÖNETEN ANA FONKSİYON ---
+@app.route("/", methods=["POST"])
+def video_fabrikasi_baslat():
+    """
+    Bu fonksiyon, bir POST isteği aldığında tüm video üretim hattını tetikler.
+    Adım adım ilerler, her adımı loglar ve sonunda tüm çıktıları Cloud Storage'a yükler.
+    """
+    # Her video üretimi için benzersiz bir geçici klasör oluştur.
+    # Bu, birden fazla istek aynı anda gelirse dosyaların karışmasını önler.
+    # Cloud Run'da sadece /tmp dizinine yazma iznimiz var.
+    temp_dir = tempfile.mkdtemp(dir="/tmp")
+    logging.info(f"🚀 Yeni üretim süreci başlatıldı. Geçici klasör: {temp_dir}")
 
-# Global instance
-video_fabrikasi = VideoFabrikasi()
-
-@app.route('/', methods=['POST'])
-def create_video():
     try:
-        data = request.get_json() or {}
-        text = data.get('text', 'Merhaba Dünya! Bu bir test videosudur.')
-        duration = min(int(data.get('duration', 10)), 30)  # Max 30 saniye
-        
-        # Video oluştur
-        video_path = video_fabrikasi.create_video(text, duration)
-        
-        # Video dosyasını gönder
-        def remove_file(response):
-            try:
-                os.unlink(video_path)
-            except:
-                pass
-            return response
-        
-        return send_file(
-            video_path,
-            as_attachment=True,
-            download_name=f'video_{duration}s.mp4',
-            mimetype='video/mp4'
-        )
-    
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # ==============================================================================
+        # ADIM 1 & 2: HİKAYE ÜRETİMİ
+        # ==============================================================================
+        logging.info("[ADIM 1/9] Konu seçiliyor ve hikaye oluşturuluyor...")
+        (
+            story_content,
+            story_title,
+            protagonist_profile,
+            api_keys,
+            formatted_text
+        ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
 
+        if not story_title:
+            logging.warning("İşlenecek yeni konu bulunamadı. Üretim bandı durduruldu.")
+            return jsonify({"status": "finished", "message": "No new topics to process."}), 200
+
+        logging.info(f"✅ Hikaye başarıyla oluşturuldu. Başlık: '{story_title}'")
+        
+        # Formatlanmış hikayeyi geçici olarak kaydet
+        formatted_story_path = os.path.join(temp_dir, "hikaye_formatli.txt")
+        with open(formatted_story_path, "w", encoding="utf-8") as f:
+            f.write(formatted_text)
+        logging.info(f"💾 Formatlanmış hikaye geçici olarak kaydedildi: {formatted_story_path}")
+
+        # ==============================================================================
+        # ADIM 3 & 4: SESLENDİRME VE ALTYAZI
+        # ==============================================================================
+        logging.info("[ADIM 3-4/9] Seslendirme ve senkronize altyazı üretimi başlıyor...")
+        audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(
+            story_text=formatted_text, # Formatlanmış metni kullanıyoruz
+            output_dir=temp_dir,
+            api_keys_list=api_keys
+        )
+        if not audio_file_path or not srt_file_path:
+            raise Exception("Ses veya altyazı dosyası oluşturulamadı.")
+        logging.info("✅ Ses ve altyazı başarıyla oluşturuldu.")
+
+        # ==============================================================================
+        # ADIM 5: PROFİL FOTOĞRAFI ÜRETİMİ
+        # ==============================================================================
+        logging.info("[ADIM 5/9] Profil fotoğrafı üretimi başlıyor...")
+        original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(
+            protagonist_profile=protagonist_profile,
+            output_dir=temp_dir
+        )
+        if not original_photo_path or not thumbnail_photo_path:
+            raise Exception("Profil fotoğrafı veya küçük resim için fotoğraf üretilemedi.")
+        logging.info("✅ Profil fotoğrafı ve küçük resim versiyonu başarıyla üretildi.")
+
+        # ==============================================================================
+        # ADIM 6: ARKA PLAN TEMİZLEME
+        # ==============================================================================
+        logging.info("[ADIM 6/9] Profil fotoğrafının arka planı temizleniyor...")
+        cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(
+            input_path=original_photo_path,
+            output_dir=temp_dir
+        )
+        if not cleaned_photo_path:
+            raise Exception("Profil fotoğrafının arka planı temizlenemedi.")
+        logging.info("✅ Arka plan başarıyla temizlendi.")
+
+        # ==============================================================================
+        # ADIM 7: VİDEO BİRLEŞTİRME
+        # ==============================================================================
+        logging.info("[ADIM 7/9] Video birleştirme işlemi başlıyor...")
+        
+        # Arka plan videosunu Cloud Storage'dan indir
+        storage_client = storage.Client()
+        kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+        bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
+        bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
+        bg_video_blob.download_to_filename(bg_video_path)
+        logging.info("✅ Arka plan videosu indirildi.")
+
+        final_video_path = videoyapar.run_video_creation(
+            bg_video_path=bg_video_path,
+            audio_path=audio_file_path,
+            srt_path=srt_file_path,
+            profile_photo_path=cleaned_photo_path,
+            protagonist_profile=protagonist_profile,
+            output_dir=temp_dir
+        )
+        if not final_video_path:
+            raise Exception("Nihai video dosyası oluşturulamadı.")
+        logging.info("✅ Video başarıyla birleştirildi.")
+
+        # ==============================================================================
+        # ADIM 8: YOUTUBE KÜÇÜK RESMİ OLUŞTURMA
+        # ==============================================================================
+        logging.info("[ADIM 8/9] YouTube küçük resmi oluşturuluyor...")
+        final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
+            story_text=formatted_text,
+            profile_photo_path=thumbnail_photo_path, # Küçük resim için özel olarak üretilen fotoğraf
+            output_dir=temp_dir,
+            api_keys=api_keys
+        )
+        if not final_thumbnail_path:
+            raise Exception("YouTube küçük resmi oluşturulamadı.")
+        logging.info("✅ YouTube küçük resmi başarıyla oluşturuldu.")
+
+        # ==============================================================================
+        # ADIM 9: PAKETLEME VE TESLİMAT (CLOUD STORAGE'A YÜKLEME)
+        # ==============================================================================
+        logging.info("[ADIM 9/9] Üretilen dosyalar Cloud Storage'a yükleniyor...")
+        cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
+        # Dosya adlarında geçersiz karakterleri temizle
+        safe_folder_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in story_title)
+
+        files_to_upload = {
+            "nihai_video.mp4": final_video_path,
+            "kucuk_resim.png": final_thumbnail_path,
+            "altyazi.srt": srt_file_path,
+            "ses.wav": audio_file_path,
+            "hikaye.txt": formatted_story_path,
+            "profil_foto_temiz.png": cleaned_photo_path,
+            "profil_foto_orijinal.png": original_photo_path
+        }
+
+        for filename, local_path in files_to_upload.items():
+            if os.path.exists(local_path):
+                blob_path = f"{safe_folder_name}/{filename}"
+                blob = cikti_bucket.blob(blob_path)
+                blob.upload_from_filename(local_path)
+                logging.info(f"  -> Yüklendi: {blob_path}")
+            else:
+                logging.warning(f"  -> ATLANDI: {local_path} bulunamadı.")
+        
+        logging.info("✅ Tüm dosyalar başarıyla Cloud Storage'a yüklendi.")
+
+        # ==============================================================================
+        # BAŞARILI SONUÇ
+        # ==============================================================================
+        logging.info("🎉🎉🎉 ÜRETİM BANDI BAŞARIYLA TAMAMLANDI! 🎉🎉🎉")
+        return jsonify({
+            "status": "success",
+            "message": f"Video for '{story_title}' was successfully generated and uploaded.",
+            "output_bucket": CIKTI_BUCKET_ADI,
+            "output_folder": safe_folder_name
+        }), 200
+
+    except Exception as e:
+        # Herhangi bir adımda hata olursa, hatayı logla ve 500 koduyla yanıt dön.
+        error_message = f"Üretim bandında kritik bir hata oluştu: {e}"
+        # Hatanın tüm detaylarını (traceback) loglara yazdır.
+        logging.error(error_message, exc_info=True)
+        # traceback.print_exc() # Konsolda görmek için de kullanılabilir
+        return jsonify({"status": "error", "message": error_message}), 500
+
+    finally:
+        # Hata olsa da olmasa da, geçici klasörü ve içindeki her şeyi sil.
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            logging.info(f"🧹 Geçici klasör temizlendi: {temp_dir}")
+
+# Sağlık kontrolü için basit bir endpoint
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'healthy', 'resolution': '720p'}), 200
+    return jsonify({'status': 'healthy'}), 200
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
+if __name__ == "__main__":
+    # Cloud Run tarafından sağlanan PORT'u kullan
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
