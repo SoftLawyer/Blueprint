@@ -9,7 +9,7 @@ from moviepy.editor import (
 )
 from moviepy.audio.AudioClip import AudioArrayClip
 
-# --- AYARLAR (Sizin orijinal kodunuzdan alındı) ---
+# --- AYARLAR (Orijinal boyutlar korundu) ---
 TEST_MODU = False 
 PROFIL_FOTO_KONUM_X = 0.5
 PROFIL_FOTO_KONUM_Y = 0.12
@@ -107,7 +107,7 @@ def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
 
 # --- ANA VİDEO OLUŞTURMA FONKSİYONU ---
 def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, protagonist_profile, output_dir):
-    print("--- Video Birleştirme Modülü Başlatıldı ---")
+    print("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
     
     kahraman_adi = kahraman_adini_al(protagonist_profile)
     altyazilar = altyazi_parse(srt_path)
@@ -133,6 +133,9 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             arkaplan = arkaplan_video.loop(duration=video_suresi)
         else:
             arkaplan = arkaplan_video.set_duration(video_suresi)
+
+        # 720p'ye yeniden boyutlandır
+        arkaplan = arkaplan.resize(height=720)
 
         if ses_clip.duration < video_suresi:
             print(f"🔇 Ses süresi {video_suresi - ses_clip.duration:.2f} saniye uzatılıyor")
@@ -186,7 +189,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             logger='bar'
         )
         
-        print(f"✅ Video başarıyla oluşturuldu: {output_video_path}")
+        print(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
         return output_video_path
 
     except Exception as e:

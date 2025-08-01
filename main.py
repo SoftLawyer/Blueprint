@@ -1,124 +1,163 @@
-# main.py
-
 import os
-import traceback
-from flask import Flask
-from google.cloud import storage
-import re
-import time
-
-# Kendi modüllerimizi import ediyoruz
-from hikayeuretir import run_story_generation_process
-from googleilesesolustur import run_audio_and_srt_process
-from profilfotoolusturur import run_profile_photo_generation
-from profilfotonunarkasinisiler import run_background_removal
-from videoyapar import run_video_creation
-from kucukresimolusturur import run_thumbnail_generation
-
-# --- AYARLAR ---
-CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
-KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
+import io
+import tempfile
+from flask import Flask, request, jsonify, send_file
+from PIL import Image, ImageDraw, ImageFont
+import cv2
+import numpy as np
 
 app = Flask(__name__)
 
-@app.route("/", methods=["POST"])
-def handle_request():
-    """
-    Bu ana fonksiyon, dışarıdan bir istek geldiğinde tetiklenir
-    ve TÜM başlıklar bitene kadar video üretimini sırasıyla yönetir.
-    """
+class VideoFabrikasi:
+    def __init__(self):
+        # 720p çözünürlük
+        self.width = 1280
+        self.height = 720
+        self.fps = 30
+        
+        # Tek font yükle
+        self.fonts = self._load_fonts()
     
-    processed_videos_count = 0
+    def _load_fonts(self):
+        """Liberation Sans font yükle - cache yok"""
+        font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+        
+        try:
+            if os.path.exists(font_path):
+                return {
+                    "bold": ImageFont.truetype(font_path, 28),      # 720p için
+                    "regular": ImageFont.truetype(font_path, 20),   # 720p için
+                    "small": ImageFont.truetype(font_path, 16)
+                }
+        except Exception as e:
+            print(f"Font yükleme hatası: {e}")
+        
+        # Fallback - default font
+        return {
+            "bold": ImageFont.load_default(),
+            "regular": ImageFont.load_default(), 
+            "small": ImageFont.load_default()
+        }
     
+    def _wrap_text(self, text, font, max_width):
+        """Metni satırlara böl - 720p için optimize"""
+        words = text.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = font.getbbox(test_line)
+            text_width = bbox[2] - bbox[0]
+            
+            if text_width <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                else:
+                    lines.append(word)
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return lines
+    
+    def create_video_frame(self, text, frame_number, total_frames):
+        """720p video frame oluştur"""
+        # 720p canvas
+        frame = Image.new('RGB', (self.width, self.height), color='#1a1a1a')
+        draw = ImageDraw.Draw(frame)
+        
+        # 720p için pozisyonlar
+        margin_x = 80
+        margin_y = 60
+        content_width = self.width - (2 * margin_x)
+        
+        # Text wrapping
+        lines = self._wrap_text(text, self.fonts["regular"], content_width)
+        
+        # Başlangıç Y pozisyonu
+        start_y = margin_y + 50
+        line_height = 35  # 720p için
+        
+        # Her satırı çiz
+        for i, line in enumerate(lines):
+            y_pos = start_y + (i * line_height)
+            
+            # Ekran sınırları içinde mi kontrol et
+            if y_pos < self.height - margin_y:
+                draw.text((margin_x, y_pos), line, 
+                         font=self.fonts["regular"], 
+                         fill='white')
+        
+        # PIL Image'ı OpenCV formatına çevir
+        frame_cv = cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR)
+        return frame_cv
+    
+    def create_video(self, text, duration=10):
+        """720p video oluştur"""
+        total_frames = duration * self.fps
+        
+        # Geçici video dosyası
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+            temp_path = temp_file.name
+        
+        # Video writer - 720p
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_path, fourcc, self.fps, (self.width, self.height))
+        
+        try:
+            # Frame'leri oluştur
+            for frame_num in range(total_frames):
+                frame = self.create_video_frame(text, frame_num, total_frames)
+                out.write(frame)
+            
+            out.release()
+            return temp_path
+            
+        except Exception as e:
+            out.release()
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise e
+
+# Global instance
+video_fabrikasi = VideoFabrikasi()
+
+@app.route('/', methods=['POST'])
+def create_video():
     try:
-        print("🏭 Fabrika tetiklendi, tam video üretim hattı başlıyor...")
+        data = request.get_json() or {}
+        text = data.get('text', 'Merhaba Dünya! Bu bir test videosudur.')
+        duration = min(int(data.get('duration', 10)), 30)  # Max 30 saniye
         
-        # --- TÜM BAŞLIKLARI İŞLEYEN ANA DÖNGÜ ---
-        while True:
-            print("\n" + "="*50)
-            print(f"🔄 DÖNGÜ {processed_videos_count + 1} BAŞLIYOR...")
-            print("="*50)
-
-            # Her çalıştığında /tmp klasörünü temizleyerek başlayalım
-            for item in os.listdir('/tmp'):
-                item_path = os.path.join('/tmp', item)
-                try:
-                    if os.path.isfile(item_path):
-                        os.unlink(item_path)
-                except Exception as e:
-                    print(f"/tmp temizlenirken hata: {e}")
-            
-            # Adım 1: Hikayeyi Üret.
-            story_text, story_title, protagonist_profile, api_keys, formatted_story_text = run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
-            
-            # Eğer işlenecek başlık kalmadıysa, döngüyü sonlandır.
-            if not story_text:
-                print("✅ İşlenecek başka başlık bulunamadı. Üretim hattı durduruluyor.")
-                break
-
-            safe_folder_name = re.sub(r'[^a-zA-Z0-9_]', '', story_title.replace(' ', '_'))[:50]
-            print(f"🗂️ Bu video için GCS klasörü: {safe_folder_name}")
-            
-            hikaye_path = "/tmp/hikaye.txt"
-            with open(hikaye_path, "w", encoding="utf-8") as f:
-                f.write(formatted_story_text)
-            print(f"  -> Hikaye metni geçici olarak '{hikaye_path}' dosyasına yazıldı.")
-
-            # Adım 2: Sesi ve Altyazıyı Oluştur
-            # DÜZELTME: googleilesesolustur modülü artık API anahtarlarına ihtiyaç duymuyor.
-            audio_path, srt_path = run_audio_and_srt_process(story_text, "/tmp", api_keys)
-
-            # Adım 3: Profil Fotoğrafını ve Küçük Resim için Fotoğrafı Oluştur
-            profile_photo_path, thumbnail_photo_path = run_profile_photo_generation(protagonist_profile, "/tmp")
-
-            # Adım 4: Profil Fotoğrafının Arka Planını Sil
-            final_profile_photo_path = run_background_removal(profile_photo_path, "/tmp")
-
-            # Adım 5: Videoyu Yap
-            storage_client = storage.Client()
-            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-            bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
-            bg_video_path = "/tmp/arkaplan.mp4"
-            bg_video_blob.download_to_filename(bg_video_path)
-            
-            if not os.path.exists(bg_video_path) or os.path.getsize(bg_video_path) < 1024:
-                raise Exception(f"arkaplan.mp4 dosyası GCS'den indirilemedi veya bozuk.")
-            
-            final_video_path = run_video_creation(bg_video_path, audio_path, srt_path, final_profile_photo_path, protagonist_profile, "/tmp")
-            
-            # Adım 6: YouTube Küçük Resmini Oluştur
-            thumbnail_path = run_thumbnail_generation(story_text, thumbnail_photo_path, "/tmp", api_keys)
-
-            # Adım 7: Tüm Çıktıları GCS'deki Klasöre Yükle
-            print("☁️ Tüm üretilen bileşenler GCS'ye yükleniyor...")
-            cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
-            
-            files_to_upload = {
-                f"{safe_folder_name}/video.mp4": final_video_path,
-                f"{safe_folder_name}/ses.wav": audio_path,
-                f"{safe_folder_name}/altyazi.srt": srt_path,
-                f"{safe_folder_name}/kucuk_resim.png": thumbnail_path,
-                f"{safe_folder_name}/profil_foto.png": final_profile_photo_path,
-                f"{safe_folder_name}/hikaye.txt": hikaye_path,
-            }
-
-            for gcs_path, local_path in files_to_upload.items():
-                if local_path and os.path.exists(local_path):
-                    blob = cikti_bucket.blob(gcs_path)
-                    blob.upload_from_filename(local_path)
-                    print(f"  -> Yüklendi: {gcs_path}")
-
-            processed_videos_count += 1
-            print(f"✅ Döngü {processed_videos_count} başarıyla tamamlandı.")
-            time.sleep(10) 
-
-        return f"Başarıyla tamamlandı: Toplam {processed_videos_count} video üretildi.", 200
+        # Video oluştur
+        video_path = video_fabrikasi.create_video(text, duration)
         
+        # Video dosyasını gönder
+        def remove_file(response):
+            try:
+                os.unlink(video_path)
+            except:
+                pass
+            return response
+        
+        return send_file(
+            video_path,
+            as_attachment=True,
+            download_name=f'video_{duration}s.mp4',
+            mimetype='video/mp4'
+        )
+    
     except Exception as e:
-        print(f"❌❌❌ ANA İŞ AKIŞINDA KRİTİK HATA ❌❌❌")
-        print(f"Hata {processed_videos_count + 1}. videoda meydana geldi.")
-        print(traceback.format_exc())
-        return "Sunucuda kritik bir hata oluştu.", 500
+        return jsonify({'error': str(e)}), 500
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'resolution': '720p'}), 200
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)

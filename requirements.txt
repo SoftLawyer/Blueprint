@@ -13,3 +13,4 @@ imageio-ffmpeg==0.4.9
 git+https://github.com/openai/whisper.git
 onnxruntime==1.16.1
 google-cloud-texttospeech
+matplotlib==3.7.2
