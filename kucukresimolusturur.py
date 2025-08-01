@@ -61,24 +61,98 @@ logger = logging.getLogger(__name__)
 # --- YARDIMCI FONKSİYONLAR ---
 
 def count_words(text: str) -> int:
-    return len(re.sub(r'\*', '', text).split())
+    """Güvenli kelime sayma - boş metinleri de handle eder"""
+    if not text or not isinstance(text, str):
+        return 0
+    return len(re.sub(r'\*', '', text.strip()).split())
+
+def clean_story_text(story: str) -> str:
+    """Hikaye metnini temizle ve güvenli hale getir"""
+    if not story or not isinstance(story, str):
+        return "Bir intikam hikayesi anlatılacak."
+    
+    # Çok uzun metinleri kısalt (Gemini token limiti için)
+    if len(story) > 8000:
+        story = story[:8000] + "..."
+    
+    # Tehlikeli karakterleri temizle
+    story = re.sub(r'[^\w\s.,!?;:\-\'"()[\]{}]', ' ', story)
+    
+    # Çoklu boşlukları tek boşluğa çevir
+    story = re.sub(r'\s+', ' ', story).strip()
+    
+    # Minimum uzunluk kontrolü
+    if len(story) < 50:
+        story = f"{story} Bu kişi büyük bir intikam planladı ve başarılı oldu."
+    
+    return story
 
 def ask_gemini(prompt: str, api_keys: list[str]) -> Mapping[str, str] | None:
-    key_to_use = api_keys[0] if api_keys else None
-    if not key_to_use:
+    """Gemini API çağrısı - hata toleranslı"""
+    if not api_keys:
         logger.error("Thumbnail metni üretmek için Gemini API anahtarı bulunamadı.")
         return None
+        
+    key_to_use = api_keys[0]
+    
     try:
         genai.configure(api_key=key_to_use)
-        model = genai.GenerativeModel("gemini-2.5-pro")
-        response = model.generate_content(prompt)
-        txt = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-        return json.loads(txt)
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")  # Daha stabil model
+        
+        # Güvenlik ayarları ekle
+        generation_config = {
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 2048,
+        }
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=generation_config
+        )
+        
+        if not response.text:
+            logger.error("Gemini'den boş yanıt alındı")
+            return None
+            
+        # JSON ayrıştırma - daha güvenli
+        txt = response.text.strip()
+        
+        # Markdown kod bloklarını temizle
+        txt = re.sub(r'^```json\s*', '', txt, flags=re.MULTILINE)
+        txt = re.sub(r'^```\s*$', '', txt, flags=re.MULTILINE)
+        txt = txt.strip()
+        
+        # JSON parse et
+        result = json.loads(txt)
+        
+        # Sonucu doğrula
+        required_keys = ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]
+        if not all(key in result for key in required_keys):
+            logger.error(f"Gemini yanıtında eksik anahtarlar: {set(required_keys) - set(result.keys())}")
+            return None
+            
+        # Boş değerleri kontrol et
+        for key, value in result.items():
+            if not value or not isinstance(value, str) or len(value.strip()) < 3:
+                logger.error(f"Gemini yanıtında geçersiz değer: {key} = {value}")
+                return None
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Gemini yanıtı JSON parse edilemedi: {e}")
+        logger.error(f"Ham yanıt: {response.text if 'response' in locals() else 'Yanıt alınamadı'}")
+        return None
     except Exception as exc:
-        logger.error("Gemini çağrısı başarısız oldu: %s", exc)
-    return None
+        logger.error(f"Gemini çağrısı başarısız oldu: {exc}")
+        return None
 
 def build_prompt(story: str) -> str:
+    """Güvenli prompt oluştur"""
+    clean_story = clean_story_text(story)
+    
     return f"""
 Analyze this revenge story and create compelling YouTube thumbnail text with a TOTAL WORD COUNT between 80 and 100 words.
 
@@ -95,6 +169,7 @@ CRITICAL REQUIREMENTS:
 - Expand with vivid descriptions and emotional language
 - Include specific consequences and results
 - Add dramatic adjectives and descriptive phrases
+- Return ONLY valid JSON format
 
 Key trigger words to highlight with asterisks:
 - CALLED, DESTROYED, REVENGE, REGRET, WORTHLESS, TRASH, HATE, BETRAYED
@@ -105,12 +180,21 @@ Key trigger words to highlight with asterisks:
 
 Story:
 ---
-{story}
+{clean_story}
 ---
 
 Return JSON with keys: "MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"
 Ensure total word count is 80-100 words with maximum dramatic impact.
 """.strip()
+
+def create_fallback_content() -> dict:
+    """Gemini başarısız olursa kullanılacak yedek içerik"""
+    return {
+        "MAIN_HOOK": "Someone thought they could *DESTROY* my life and get away with it but they had no idea what was coming for them",
+        "SETUP": "After years of *BETRAYAL* and *HUMILIATION* I finally had enough and decided to show them what real *REVENGE* looks like",
+        "REVENGE_LINE": "*ULTIMATE PAYBACK*",
+        "EXTRA_DETAIL": "Now they're *BEGGING* for forgiveness but it's too late because everyone knows the truth about their *PATHETIC* behavior"
+    }
 
 # --- SİZİN ORİJİNAL THUMBNAILCANVAS SINIFINIZ ---
 class ThumbnailCanvas:
@@ -136,36 +220,93 @@ class ThumbnailCanvas:
             self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
 
     def _load_fonts(self) -> None:
+        """✅ İYİLEŞTİRİLDİ: Cloud Run uyumlu font yükleme"""
         font_options = [
-            self.style.font_path, Path("impact.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
-            Path("arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"),
-            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
+            # Mevcut klasördeki fontlar
+            self.style.font_path,
+            Path("impact.ttf"),
+            Path("arial.ttf"),
+            Path("Impact.ttf"),
+            Path("Arial.ttf"),
+            
+            # Linux sistem fontları
+            Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
+            Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
+            
+            # Ubuntu fontları
+            Path("/usr/share/fonts/truetype/ubuntu/Ubuntu-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/ubuntu/Ubuntu-Medium.ttf"),
         ]
+        
         font_loaded = False
+        working_font_path = None
+        
         for font_path in font_options:
-            if os.path.exists(font_path):
+            if font_path.exists():
                 try:
+                    # Test font yüklemesi
+                    test_font = ImageFont.truetype(str(font_path), 20)
+                    
+                    # Başarılıysa tüm fontları yükle
                     self.font_title = ImageFont.truetype(str(font_path), self.current_title_size)
                     self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size)
                     self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size)
                     self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size)
+                    
                     font_loaded = True
-                    logger.info(f"Loaded font: {font_path}")
+                    working_font_path = font_path
+                    logger.info(f"✅ Font yüklendi: {font_path}")
                     break
-                except (IOError, OSError): continue
+                    
+                except (IOError, OSError) as e:
+                    logger.warning(f"⚠️ Font yüklenemedi {font_path}: {e}")
+                    continue
+        
         if not font_loaded:
-            logger.warning("Using default font")
-            self.font_title, self.font_normal, self.font_revenge, self.font_channel = (ImageFont.load_default(),)*4
+            logger.warning("⚠️ Hiçbir TrueType font bulunamadı, varsayılan font kullanılıyor")
+            try:
+                # PIL'in varsayılan fontunu kullan
+                default_font = ImageFont.load_default()
+                self.font_title = default_font
+                self.font_normal = default_font
+                self.font_revenge = default_font
+                self.font_channel = default_font
+                logger.info("✅ Varsayılan font yüklendi")
+            except Exception as e:
+                logger.error(f"❌ Varsayılan font bile yüklenemedi: {e}")
+                # Son çare: None değerleri - PIL otomatik handle eder
+                self.font_title = None
+                self.font_normal = None
+                self.font_revenge = None
+                self.font_channel = None
 
     def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
-        try: return font.getlength(text)
+        """Güvenli text width hesaplama"""
+        if not text:
+            return 0
+        try:
+            if font is None:
+                return len(text) * 10  # Tahmini genişlik
+            return font.getlength(text)
         except AttributeError:
-            bbox = self.draw.textbbox((0, 0), text, font=font)
-            return bbox[2] - bbox[0]
+            try:
+                bbox = self.draw.textbbox((0, 0), text, font=font)
+                return bbox[2] - bbox[0]
+            except:
+                return len(text) * 10  # Fallback
 
     def _text_height(self, font: ImageFont.FreeTypeFont) -> int:
-        bbox = font.getbbox("Ag")
-        return bbox[3] - bbox[1]
+        """Güvenli text height hesaplama"""
+        try:
+            if font is None:
+                return 20  # Tahmini yükseklik
+            bbox = font.getbbox("Ag")
+            return bbox[3] - bbox[1]
+        except:
+            return 20  # Fallback
 
     def _calculate_total_height_needed(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int) -> int:
         total_height = self.style.top_margin
@@ -234,10 +375,25 @@ class ThumbnailCanvas:
     def _draw_text_with_outline(self, pos, text, font, fill_color, outline_color=None, outline_width=None):
         x, y = pos
         outline_color = outline_color or self.style.text_stroke_color
-        outline_width = outline_width or max(3, int(font.size / 30))
-        self.draw.text((x, y), text, font=font, fill=fill_color, stroke_width=outline_width, stroke_fill=outline_color)
+        
+        if font is None:
+            # Fallback: font yoksa sadece normal text çiz
+            self.draw.text((x, y), text, fill=fill_color)
+            return
+            
+        outline_width = outline_width or max(3, int(getattr(font, 'size', 30) / 30))
+        
+        try:
+            self.draw.text((x, y), text, font=font, fill=fill_color, stroke_width=outline_width, stroke_fill=outline_color)
+        except:
+            # Fallback: stroke desteklenmiyorsa normal text
+            self.draw.text((x, y), text, font=font, fill=fill_color)
 
     def _wrap_text_smart(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list:
+        """Güvenli text wrapping"""
+        if not text:
+            return []
+            
         parts, current, in_highlight = [], "", False
         for char in text:
             if char == '*':
@@ -270,15 +426,22 @@ class ThumbnailCanvas:
         available_width = self.style.width - profile_width - (self.style.left_margin * 2)
         revenge_text = text.upper()
         best_font_size = self.style.min_revenge_font_size
+        
+        # Font size optimizasyonu
         for font_size in range(400, self.style.min_revenge_font_size - 1, -2):
             try:
                 test_font = ImageFont.truetype(str(self.style.font_path), font_size)
                 if self._text_width(revenge_text, test_font) <= available_width - 20:
                     best_font_size = font_size
                     break
-            except (IOError, OSError): continue
+            except (IOError, OSError): 
+                continue
         
-        revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
+        try:
+            revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
+        except:
+            revenge_font = self.font_revenge  # Fallback
+            
         text_width = self._text_width(revenge_text, revenge_font)
         text_height = self._text_height(revenge_font)
         padding = 20
@@ -298,7 +461,8 @@ class ThumbnailCanvas:
     def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
         try:
             avatar = Image.open(img_path).convert("RGBA")
-        except FileNotFoundError:
+        except (FileNotFoundError, Exception) as e:
+            logger.warning(f"Profil resmi yüklenemedi: {e}")
             avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
         
         target_width, target_height = 200, 720
@@ -309,15 +473,22 @@ class ThumbnailCanvas:
         channel_text = channel_name.upper()
         best_channel_font_size = self.style.min_channel_font_size
         padding = 15
+        
+        # Font size optimizasyonu
         for font_size in range(40, self.style.min_channel_font_size - 1, -2):
             try:
                 test_font = ImageFont.truetype(str(self.style.font_path), font_size)
                 if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2):
                     best_channel_font_size = font_size
                     break
-            except (IOError, OSError): continue
+            except (IOError, OSError): 
+                continue
             
-        channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
+        try:
+            channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
+        except:
+            channel_font = self.font_channel  # Fallback
+            
         text_width = self._text_width(channel_text, channel_font)
         text_height = self._text_height(channel_font)
         box_height = text_height + (padding * 2)
@@ -367,32 +538,109 @@ class ThumbnailCanvas:
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir, api_keys):
+    """✅ İYİLEŞTİRİLDİ: Hata toleranslı thumbnail üretimi"""
     print("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı ---")
     
+    # Hikaye metnini temizle ve doğrula
+    clean_story = clean_story_text(story_text)
+    print(f"📝 Hikaye metni temizlendi: {len(clean_story)} karakter")
+    
     parts = None
-    max_retries = 3
+    max_retries = 5  # Daha fazla deneme
+    
+    print("🤖 Gemini ile thumbnail metni üretiliyor...")
+    
     for attempt in range(max_retries):
-        current_parts = ask_gemini(build_prompt(story_text), api_keys)
-        if current_parts is None: continue
-        total_words = sum(count_words(v) for v in current_parts.values())
-        if 80 <= total_words <= 100:
-            parts = current_parts
-            break
+        print(f"🔄 Deneme {attempt + 1}/{max_retries}")
+        
+        try:
+            current_parts = ask_gemini(build_prompt(clean_story), api_keys)
+            
+            if current_parts is None:
+                print(f"❌ Gemini'den yanıt alınamadı (deneme {attempt + 1})")
+                continue
+            
+            # Kelime sayısını kontrol et
+            total_words = sum(count_words(v) for v in current_parts.values())
+            print(f"📊 Toplam kelime sayısı: {total_words}")
+            
+            # İdeal aralıkta mı?
+            if 80 <= total_words <= 100:
+                parts = current_parts
+                print(f"✅ İdeal kelime sayısında metin üretildi: {total_words} kelime")
+                break
+            elif 70 <= total_words <= 110:  # Biraz daha esnek aralık
+                parts = current_parts
+                print(f"⚠️ Kabul edilebilir kelime sayısında metin: {total_words} kelime")
+                break
+            else:
+                print(f"⚠️ Kelime sayısı hedef dışında: {total_words} (hedef: 80-100)")
+                
+        except Exception as e:
+            print(f"❌ Gemini çağrısı sırasında hata (deneme {attempt + 1}): {e}")
+            continue
+    
+    # Gemini başarısız olursa fallback kullan
     if parts is None:
-        raise Exception("Hedef kelime sayısında metin üretilemedi.")
+        print("⚠️ Gemini ile metin üretilemedi, yedek içerik kullanılıyor")
+        parts = create_fallback_content()
+        total_words = sum(count_words(v) for v in parts.values())
+        print(f"📝 Yedek içerik yüklendi: {total_words} kelime")
     
-    canvas = ThumbnailCanvas(STYLE)
+    # Üretilen metinleri logla
+    print("\n📋 Üretilen thumbnail metinleri:")
+    for key, value in parts.items():
+        word_count = count_words(value)
+        print(f"  {key}: {word_count} kelime - {value[:50]}...")
     
-    canvas.compose(
-        main_hook=parts.get("MAIN_HOOK", ""),
-        setup=parts.get("SETUP", ""),
-        revenge_line=parts.get("REVENGE_LINE", ""),
-        extra_detail=parts.get("EXTRA_DETAIL", ""),
-        profile_pic_path=profile_photo_path,
-    )
+    print("\n🎨 Thumbnail canvas oluşturuluyor...")
     
+    try:
+        canvas = ThumbnailCanvas(STYLE)
+        print("✅ Canvas başarıyla oluşturuldu")
+    except Exception as e:
+        print(f"❌ Canvas oluşturma hatası: {e}")
+        raise Exception(f"Thumbnail canvas oluşturulamadı: {e}")
+    
+    print("🖼️ Thumbnail compose ediliyor...")
+    
+    try:
+        canvas.compose(
+            main_hook=parts.get("MAIN_HOOK", ""),
+            setup=parts.get("SETUP", ""),
+            revenge_line=parts.get("REVENGE_LINE", "REVENGE"),
+            extra_detail=parts.get("EXTRA_DETAIL", ""),
+            profile_pic_path=profile_photo_path,
+        )
+        print("✅ Thumbnail compose başarılı")
+    except Exception as e:
+        print(f"❌ Thumbnail compose hatası: {e}")
+        raise Exception(f"Thumbnail compose edilemedi: {e}")
+    
+    # Çıktı dosyasını kaydet
     thumbnail_path = os.path.join(output_dir, "kucuk_resim.png")
-    canvas.image.save(thumbnail_path, "PNG", quality=95)
     
+    try:
+        canvas.image.save(thumbnail_path, "PNG", quality=95)
+        print(f"💾 Thumbnail kaydedildi: {thumbnail_path}")
+    except Exception as e:
+        print(f"❌ Thumbnail kaydetme hatası: {e}")
+        raise Exception(f"Thumbnail kaydedilemedi: {e}")
+    
+    # Dosya boyutunu kontrol et
+    try:
+        file_size = os.path.getsize(thumbnail_path)
+        print(f"📏 Dosya boyutu: {file_size / 1024:.1f} KB")
+        
+        if file_size < 1024:  # 1KB'dan küçükse sorun var
+            print("⚠️ Dosya boyutu çok küçük, sorun olabilir")
+        elif file_size > 5 * 1024 * 1024:  # 5MB'dan büyükse
+            print("⚠️ Dosya boyutu çok büyük")
+            
+    except Exception as e:
+        print(f"⚠️ Dosya boyutu kontrol edilemedi: {e}")
+    
+    print("✅ Thumbnail üretimi tamamlandı!")
     logger.info("Thumbnail saved to '%s'", thumbnail_path)
     return thumbnail_path
+

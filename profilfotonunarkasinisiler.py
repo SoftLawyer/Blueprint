@@ -118,11 +118,13 @@ def smart_face_preserving_cleanup(input_path, output_path):
 
 def ultra_safe_cleanup(input_path, output_path):
     """Ultra güvenli temizlik - yüz hiç dokunulmaz"""
+    temp_path = None
     try:
         print(f"🔄 Ultra güvenli temizlik başlıyor: {input_path}")
         
-        # Cloud Run'da geçici dosyalar /tmp klasörüne yazılmalıdır.
-        temp_path = os.path.join(os.path.dirname(output_path), "temp_safe.png")
+        # ✅ DEĞİŞİKLİK: Cloud Run için /tmp klasörü kullan
+        temp_path = os.path.join("/tmp", f"temp_safe_{os.getpid()}_{int(time.time())}.png")
+        
         if not smart_face_preserving_cleanup(input_path, temp_path):
             return False
         
@@ -149,13 +151,20 @@ def ultra_safe_cleanup(input_path, output_path):
         result_image = Image.fromarray(img_array)
         result_image.save(output_path)
         
-        os.remove(temp_path)
-        
         print(f"✅ Ultra güvenli temizlik tamamlandı: {output_path}")
         return True
+        
     except Exception as e:
         print(f"❌ Ultra güvenli temizlik hatası: {e}")
         return False
+    finally:
+        # ✅ DEĞİŞİKLİK: Finally bloğunda geçici dosyayı temizle
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+                print(f"🗑️ Geçici dosya temizlendi: {temp_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Geçici dosya temizlenirken hata: {cleanup_error}")
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_background_removal(input_path, output_dir):
