@@ -8,12 +8,13 @@ import wave
 import base64
 import whisper
 
-# --- Sabitler (Sizin orijinal kodunuzdan) ---
+# --- Sabitler ---
 SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 4500 
-MAX_RETRIES = 3  # Maksimum deneme sayısı
+MAX_RETRIES = 3
+SERVICE_RETRY_INTERVAL = 30  # Servis down olduğunda 30 saniye bekle
 
-# --- Yardımcı Fonksiyonlar (Sizin orijinal kodunuzdan, buluta uyarlandı) ---
+# --- Yardımcı Fonksiyonlar ---
 
 def split_text(text, max_length=API_CHUNK_SIZE):
     """Metni, kelimeleri bölmemeye çalışarak API sınırlarına uygun parçalara böler."""
@@ -27,6 +28,40 @@ def split_text(text, max_length=API_CHUNK_SIZE):
         text = text[split_pos:].lstrip()
     chunks.append(text)
     return chunks
+
+def get_error_reason(status_code, response_text):
+    """HTTP hata koduna göre sebep açıklaması döner"""
+    try:
+        error_data = json.loads(response_text)
+        error_message = error_data.get('error', {}).get('message', '')
+        
+        if 'quota' in error_message.lower() or 'limit' in error_message.lower():
+            return f"KOTA AŞIMI: {error_message}"
+        elif 'suspended' in error_message.lower():
+            return f"API ANAHTARI ASKIYA ALINDI: {error_message}"
+        elif 'permission' in error_message.lower():
+            return f"YETKİ SORUNU: {error_message}"
+        elif 'billing' in error_message.lower():
+            return f"FATURA/ÖDEME SORUNU: {error_message}"
+        else:
+            return f"API HATASI: {error_message}"
+    except:
+        pass
+    
+    # HTTP status koduna göre genel açıklama
+    error_reasons = {
+        400: "KÖTÜ İSTEK: API parametreleri hatalı",
+        401: "YETKİSİZ ERİŞİM: API anahtarı geçersiz",
+        403: "YASAK ERİŞİM: Kota aşımı veya API anahtarı askıda",
+        404: "BULUNAMADI: API endpoint hatalı",
+        429: "ÇOK FAZLA İSTEK: Rate limit aşımı",
+        500: "SUNUCU HATASI: Google'ın iç sunucu hatası",
+        502: "BAD GATEWAY: Google servisi geçici olarak erişilemez",
+        503: "SERVİS KULLANILAMAZ: Google servisi bakımda",
+        504: "GATEWAY TIMEOUT: Google servisi yanıt vermiyor"
+    }
+    
+    return error_reasons.get(status_code, f"BİLİNMEYEN HATA: HTTP {status_code}")
 
 def test_api_key(api_key, key_number):
     """API anahtarını test eder."""
@@ -47,11 +82,8 @@ def test_api_key(api_key, key_number):
                         time.sleep(2)
                         continue
             else:
-                try:
-                    error_details = response.json().get('error', {}).get('message', 'Bilinmeyen Hata')
-                except:
-                    error_details = f"HTTP {response.status_code} - JSON parse edilemedi"
-                print(f"❌ TTS API anahtarı {key_number} geçersiz (HTTP {response.status_code}): {error_details}")
+                error_reason = get_error_reason(response.status_code, response.text)
+                print(f"❌ TTS API anahtarı {key_number} geçersiz: {error_reason}")
                 return False
         except Exception as e:
             print(f"⚠️ TTS API anahtarı {key_number} test edilirken hata (Deneme {attempt + 1}/{MAX_RETRIES}): {e}")
@@ -62,8 +94,8 @@ def test_api_key(api_key, key_number):
     print(f"❌ TTS API anahtarı {key_number}: {MAX_RETRIES} deneme sonrası başarısız")
     return False
 
-def make_tts_request(chunk, api_key, chunk_number, total_chunks):
-    """Tek bir chunk için TTS isteği yapar, 3 kere dener"""
+def make_tts_request_with_service_wait(chunk, api_key, chunk_number, total_chunks):
+    """Tek bir chunk için TTS isteği yapar, servis down ise sürekli bekler"""
     url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
     data = {
         "input": {"text": chunk},
@@ -71,9 +103,11 @@ def make_tts_request(chunk, api_key, chunk_number, total_chunks):
         "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.95, "sampleRateHertz": SAMPLE_RATE}
     }
     
-    for attempt in range(MAX_RETRIES):
+    attempt = 0
+    while True:  # Sonsuz döngü - servis düzelene kadar bekle
+        attempt += 1
         try:
-            print(f"  ➡️ Parça {chunk_number}/{total_chunks} işleniyor... (Deneme {attempt + 1}/{MAX_RETRIES})")
+            print(f"  ➡️ Parça {chunk_number}/{total_chunks} işleniyor... (Deneme {attempt})")
             
             response = requests.post(url, json=data, timeout=90, headers={'Content-Type': 'application/json'})
             
@@ -85,34 +119,33 @@ def make_tts_request(chunk, api_key, chunk_number, total_chunks):
                         print(f"  ✅ Parça {chunk_number} başarıyla işlendi")
                         return audio_content
                     else:
-                        print(f"  ⚠️ Parça {chunk_number}: audioContent bulunamadı (Deneme {attempt + 1}/{MAX_RETRIES})")
+                        print(f"  ⚠️ Parça {chunk_number}: audioContent bulunamadı")
                 except json.JSONDecodeError as e:
-                    print(f"  ⚠️ Parça {chunk_number}: JSON parse hatası - {e} (Deneme {attempt + 1}/{MAX_RETRIES})")
+                    print(f"  ⚠️ Parça {chunk_number}: JSON parse hatası - {e}")
             else:
-                try:
-                    error_msg = response.json().get('error', {}).get('message', f"HTTP {response.status_code}")
-                except:
-                    error_msg = f"HTTP {response.status_code} - JSON parse edilemedi"
-                print(f"  ⚠️ Parça {chunk_number}: API Hatası - {error_msg} (Deneme {attempt + 1}/{MAX_RETRIES})")
-            
-            if attempt < MAX_RETRIES - 1:
-                wait_time = (attempt + 1) * 2  # 2, 4, 6 saniye bekleme
-                print(f"  ⏳ {wait_time} saniye bekleniyor...")
-                time.sleep(wait_time)
+                error_reason = get_error_reason(response.status_code, response.text)
+                
+                # Eğer kalıcı hata ise (kota, yetki vs) döngüden çık
+                if response.status_code in [401, 403] and ('quota' in error_reason.lower() or 'suspended' in error_reason.lower() or 'billing' in error_reason.lower()):
+                    print(f"  ❌ Parça {chunk_number}: KALİCI HATA - {error_reason}")
+                    return None
+                
+                # Geçici hata ise bekle ve devam et
+                print(f"  🔄 Parça {chunk_number}: SERVİSTEN YANIT ALINAMIYOR - {error_reason}")
+                print(f"  ⏳ {SERVICE_RETRY_INTERVAL} saniye sonra tekrar denenecek...")
+                time.sleep(SERVICE_RETRY_INTERVAL)
+                continue
                 
         except requests.exceptions.RequestException as e:
-            print(f"  ⚠️ Parça {chunk_number}: Ağ hatası - {e} (Deneme {attempt + 1}/{MAX_RETRIES})")
-            if attempt < MAX_RETRIES - 1:
-                wait_time = (attempt + 1) * 2
-                print(f"  ⏳ {wait_time} saniye bekleniyor...")
-                time.sleep(wait_time)
+            print(f"  🔄 Parça {chunk_number}: SERVİSTEN YANIT ALINAMIYOR - Ağ hatası: {e}")
+            print(f"  ⏳ {SERVICE_RETRY_INTERVAL} saniye sonra tekrar denenecek...")
+            time.sleep(SERVICE_RETRY_INTERVAL)
+            continue
         except Exception as e:
-            print(f"  ⚠️ Parça {chunk_number}: Beklenmeyen hata - {e} (Deneme {attempt + 1}/{MAX_RETRIES})")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(2)
-    
-    print(f"  ❌ Parça {chunk_number}: {MAX_RETRIES} deneme sonrası başarısız")
-    return None
+            print(f"  🔄 Parça {chunk_number}: SERVİSTEN YANIT ALINAMIYOR - Beklenmeyen hata: {e}")
+            print(f"  ⏳ {SERVICE_RETRY_INTERVAL} saniye sonra tekrar denenecek...")
+            time.sleep(SERVICE_RETRY_INTERVAL)
+            continue
 
 def text_to_speech_chirp3_only(text, api_keys):
     """Metni parçalara ayırır, Chirp3-HD-Enceladus sesi ile sese çevirir ve birleştirir."""
@@ -135,12 +168,12 @@ def text_to_speech_chirp3_only(text, api_keys):
         all_chunks_successful = True
         
         for i, chunk in enumerate(text_chunks, 1):
-            audio_content = make_tts_request(chunk, api_key, i, len(text_chunks))
+            audio_content = make_tts_request_with_service_wait(chunk, api_key, i, len(text_chunks))
             
             if audio_content is not None:
                 combined_audio_content += audio_content
             else:
-                print(f"  ❌ Parça {i} işlenemedi, sonraki API anahtarına geçiliyor...")
+                print(f"  ❌ Parça {i} kalıcı hata nedeniyle işlenemedi, sonraki API anahtarına geçiliyor...")
                 all_chunks_successful = False
                 break
         
