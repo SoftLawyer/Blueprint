@@ -39,25 +39,20 @@ RUN sed -i 's/rights="none"/rights="read|write"/g' /etc/ImageMagick-6/policy.xml
 # Adım 4: Yüklenen yeni fontları sisteme tanıt
 RUN fc-cache -f -v
 
-# Adım 5: Matplotlib cache ve backend ayarları
-ENV MPLCONFIGDIR=/tmp/matplotlib
-ENV MPLBACKEND=Agg
-RUN mkdir -p /tmp/matplotlib
-
-# Adım 6: Uygulama klasörünü oluştur ve içine gir
+# Adım 5: Uygulama klasörünü oluştur ve içine gir
 WORKDIR /app
 
-# Adım 7: Gerekli Python kütüphanelerini kur
+# Adım 6: Gerekli Python kütüphanelerini kur
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Adım 8: Kurulumu doğrulamak için (opsiyonel)
+# Adım 7: Kurulumu doğrulamak için (opsiyonel)
 RUN python -c "import moviepy.editor; print('✅ MoviePy Başarıyla Yüklendi!')"
 RUN python -c "import cv2; print('✅ OpenCV Başarıyla Yüklendi!')"
 RUN python -c "from rembg import remove; print('✅ Rembg Başarıyla Yüklendi!')"
 
-# Adım 9: Proje kodlarını kopyala
+# Adım 8: Proje kodlarını kopyala
 COPY . .
 
-# Adım 10: Uygulamayı çalıştır - Timeout ve thread sayısını optimize et
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 2 --timeout 300 main:app
+# Adım 9: Uygulamayı çalıştır
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 3600 main:app
