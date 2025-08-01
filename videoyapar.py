@@ -169,7 +169,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
         altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
         
-        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
+        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genisligi, altyazi_y_konum, video_suresi)
 
         final_clip = CompositeVideoClip([
             arkaplan,
@@ -180,14 +180,22 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         ])
         
         output_video_path = os.path.join(output_dir, "final_video.mp4")
+        
+        # --- KALİTEYİ KORUYARAK HIZLANDIRMA İÇİN GÜNCELLENMİŞ KOD ---
+        # Cloud Run'da mevcut CPU sayısını al, varsayılan olarak 4 kullan.
+        available_threads = os.cpu_count() or 4
+        print(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
+        
         final_clip.write_videofile(
             output_video_path, 
             codec="libx264", 
             audio_codec="aac", 
             fps=24,
-            threads=2,
+            threads=available_threads, # Kullanılabilir tüm çekirdekleri kullan
+            preset="medium", # 'medium' varsayılan ayardır ve kalite/hız arasında iyi bir denge sunar.
             logger='bar'
         )
+        # --- GÜNCELLEME SONU ---
         
         print(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
         return output_video_path
