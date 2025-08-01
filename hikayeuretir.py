@@ -5,6 +5,7 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud import storage, secretmanager
 import os
 import time
+import re
 
 # --- Global Değişkenler ---
 API_KEYS = []
@@ -72,6 +73,103 @@ def generate_with_failover(prompt):
             model = None
     return None
 
+# 🆕 YENİ FONKSİYON: Hikaye formatını doğrular
+def validate_story_format(formatted_text):
+    """Hikayede STORY: ve VIEWER ENGAGEMENT: bölümlerinin varlığını kontrol eder."""
+    print("🔍 Hikaye formatı doğrulanıyor...")
+    
+    # STORY: bölümünü ara
+    story_pattern = r'STORY:\s*\n(.+?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)'
+    story_match = re.search(story_pattern, formatted_text, re.DOTALL | re.IGNORECASE)
+    
+    # VIEWER ENGAGEMENT: bölümünü ara
+    engagement_pattern = r'VIEWER ENGAGEMENT:\s*\n(.+?)(?=\n\s*[-]{5,}|\Z)'
+    engagement_match = re.search(engagement_pattern, formatted_text, re.DOTALL | re.IGNORECASE)
+    
+    issues = []
+    
+    if not story_match:
+        issues.append("❌ STORY: bölümü bulunamadı")
+    else:
+        story_content = story_match.group(1).strip()
+        if len(story_content) < 100:
+            issues.append(f"❌ STORY: bölümü çok kısa ({len(story_content)} karakter)")
+        else:
+            print(f"✅ STORY: bölümü bulundu ({len(story_content)} karakter)")
+    
+    if not engagement_match:
+        issues.append("❌ VIEWER ENGAGEMENT: bölümü bulunamadı")
+    else:
+        engagement_content = engagement_match.group(1).strip()
+        if len(engagement_content) < 20:
+            issues.append(f"❌ VIEWER ENGAGEMENT: bölümü çok kısa ({len(engagement_content)} karakter)")
+        else:
+            print(f"✅ VIEWER ENGAGEMENT: bölümü bulundu ({len(engagement_content)} karakter)")
+    
+    if issues:
+        print("⚠️ Format doğrulama sorunları:")
+        for issue in issues:
+            print(f"   {issue}")
+        return False
+    
+    print("✅ Hikaye formatı doğrulandı - tüm gerekli bölümler mevcut")
+    return True
+
+# 🆕 YENİ FONKSİYON: Eksik bölümleri düzeltir
+def fix_missing_sections(formatted_text, story_title, story_content, engagement_prompt):
+    """Eksik STORY: ve VIEWER ENGAGEMENT: bölümlerini düzeltir."""
+    print("🔧 Eksik bölümler düzeltiliyor...")
+    
+    # Mevcut formatı kontrol et
+    has_story = re.search(r'STORY:\s*\n', formatted_text, re.IGNORECASE)
+    has_engagement = re.search(r'VIEWER ENGAGEMENT:\s*\n', formatted_text, re.IGNORECASE)
+    
+    if has_story and has_engagement:
+        return formatted_text
+    
+    # Yeniden format oluştur
+    fixed_parts = [
+        "="*60,
+        f"YOUTUBE REVENGE STORY - FICTIONAL",
+        "="*60,
+        f"\nTitle: {story_title}",
+        "Note: All names, companies, and events are completely fictional.\n",
+        "-"*60 + "\n"
+    ]
+    
+    # STORY: bölümünü ekle
+    if not has_story:
+        print("🔧 STORY: bölümü ekleniyor...")
+        fixed_parts.extend([
+            "STORY:",
+            story_content if story_content else "Story content not available."
+        ])
+    else:
+        # Mevcut STORY bölümünü koru
+        story_match = re.search(r'(STORY:.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)', 
+                               formatted_text, re.DOTALL | re.IGNORECASE)
+        if story_match:
+            fixed_parts.append(story_match.group(1))
+    
+    # VIEWER ENGAGEMENT: bölümünü ekle
+    if not has_engagement:
+        print("🔧 VIEWER ENGAGEMENT: bölümü ekleniyor...")
+        fixed_parts.extend([
+            "\n" + "-"*40 + "\n",
+            "VIEWER ENGAGEMENT:",
+            engagement_prompt if engagement_prompt else "What do you think about this story? Let me know in the comments below!"
+        ])
+    else:
+        # Mevcut VIEWER ENGAGEMENT bölümünü koru
+        engagement_match = re.search(r'(VIEWER ENGAGEMENT:.*?)(?=\n\s*[-]{5,}|\Z)', 
+                                   formatted_text, re.DOTALL | re.IGNORECASE)
+        if engagement_match:
+            fixed_parts.extend(["\n" + "-"*40 + "\n", engagement_match.group(1)])
+    
+    fixed_text = "\n".join(fixed_parts)
+    print("✅ Eksik bölümler başarıyla düzeltildi")
+    return fixed_text
+
 # --- SİZİN ORİJİNAL HİKAYE OLUŞTURUCU SINIFINIZ (GÜNCELLENDİ) ---
 class YouTubeRevengeStoryGenerator:
     def __init__(self):
@@ -111,9 +209,20 @@ class YouTubeRevengeStoryGenerator:
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
-        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
+        prompt = f"""Based on this story title: "{story_title}" and story content, create a compelling viewer engagement prompt that encourages comments, likes, and subscriptions.
+
+The engagement prompt should:
+- Ask viewers what they think about the story
+- Encourage them to share similar experiences
+- Ask for their opinion on the protagonist's actions
+- Include a call-to-action for likes and subscriptions
+- Be conversational and engaging
+- Be 2-3 sentences long
+
+Write ONLY the engagement prompt, nothing else."""
+        
         response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else None
+        return response.text.strip() if response and hasattr(response, 'text') else "What do you think about this story? Have you ever experienced something similar? Let me know in the comments below and don't forget to like and subscribe for more stories!"
 
     def generate_opening_section(self, story_title, protagonist_profile):
         prompt = f"""Write ONLY the first section (Dramatic Opening)... (Sizin Orijinal Prompt'unuz)"""
@@ -194,19 +303,48 @@ ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count ever
         return final_story
 
     def format_story_for_saving(self, story, title, protagonist_profile, engagement_prompt, is_opening_only=False):
-        content_parts = ["="*60, f"YOUTUBE REVENGE STORY ({'OPENING SECTION - ' if is_opening_only else ''}FICTIONAL)", "="*60,
-                         f"\nTitle: {title}", "Note: All names, companies, and events are completely fictional.\n",
-                         "PROTAGONIST PROFILE:", "-"*30, protagonist_profile, "-"*30 + "\n"]
+        """🆕 Garantili format oluşturur - STORY: ve VIEWER ENGAGEMENT: bölümleri kesinlikle dahil edilir."""
+        
+        content_parts = [
+            "="*60,
+            f"YOUTUBE REVENGE STORY ({'OPENING SECTION - ' if is_opening_only else ''}FICTIONAL)",
+            "="*60,
+            f"\nTitle: {title}",
+            "Note: All names, companies, and events are completely fictional.\n",
+            "PROTAGONIST PROFILE:",
+            "-"*30,
+            protagonist_profile,
+            "-"*30 + "\n"
+        ]
+        
         if not is_opening_only:
             content_parts.append("STORY STRUCTURE (ULTRA-OPTIMIZED FOR 25-29 MINUTES):")
             for i, section in self.story_structure.items():
                 content_parts.append(f"{i}. {section['name']} (~{section['words']} words)")
         else:
             content_parts.append("SECTION: Dramatic Opening (~140 words)")
-        content_parts.extend(["-"*60 + "\n\n", "STORY:", story])
-        if engagement_prompt:
-            content_parts.extend(["\n\n" + "-"*40 + "\n\n", "VIEWER ENGAGEMENT:", engagement_prompt])
-        return "\n".join(content_parts)
+        
+        content_parts.extend([
+            "-"*60 + "\n",
+            "STORY:",  # 🎯 GARANTİLİ STORY: bölümü
+            story if story else "Story content not available."
+        ])
+        
+        # 🎯 GARANTİLİ VIEWER ENGAGEMENT: bölümü
+        content_parts.extend([
+            "\n" + "-"*40 + "\n",
+            "VIEWER ENGAGEMENT:",
+            engagement_prompt if engagement_prompt else "What do you think about this story? Have you ever experienced something similar? Let me know in the comments below and don't forget to like and subscribe for more stories!"
+        ])
+        
+        formatted_text = "\n".join(content_parts)
+        
+        # 🔍 Format doğrulaması yap
+        if not validate_story_format(formatted_text):
+            print("⚠️ Format doğrulaması başarısız, düzeltiliyor...")
+            formatted_text = fix_missing_sections(formatted_text, title, story, engagement_prompt)
+        
+        return formatted_text
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
@@ -248,4 +386,14 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     if not formatted_text:
         raise Exception("Hikaye metni formatlanamadı.")
 
+    # 🔍 Son kontrol - format doğrulaması
+    if not validate_story_format(formatted_text):
+        print("❌ UYARI: Final format doğrulaması başarısız!")
+        formatted_text = fix_missing_sections(formatted_text, story_title, story_content, engagement_prompt)
+        
+        # Tekrar kontrol et
+        if not validate_story_format(formatted_text):
+            raise Exception("Hikaye formatı düzeltilemedi - STORY: ve VIEWER ENGAGEMENT: bölümleri eksik!")
+
+    print("✅ Hikaye formatı garantili olarak doğrulandı")
     return story_content, story_title, protagonist_profile, API_KEYS, formatted_text
