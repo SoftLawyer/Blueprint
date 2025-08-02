@@ -97,7 +97,7 @@ def ask_gemini(prompt: str, api_keys: list[str]) -> Mapping[str, str] | None:
     
     try:
         genai.configure(api_key=key_to_use)
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")  # Daha stabil model
+        model = genai.GenerativeModel("gemini-2.5-pro")  # Daha stabil model
         
         # Güvenlik ayarları ekle
         generation_config = {
@@ -324,7 +324,7 @@ class ThumbnailCanvas:
         return total_height
 
     def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
-        revenge_area_height = 100
+        revenge_area_height = 120  # 🔧 Revenge area için daha fazla alan ayır
         target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height
         max_attempts = 30
         
@@ -446,7 +446,10 @@ class ThumbnailCanvas:
         text_height = self._text_height(revenge_font)
         padding = 20
         bg_height = text_height + (padding * 2)
-        bg_y = self.style.height - bg_height - 15
+        
+        # 🔧 DÜZELTME: Revenge text pozisyonunu yukarı çek
+        # Önceki: bg_y = self.style.height - bg_height - 15
+        bg_y = self.style.height - bg_height - 45  # 45 pixel yukarı çektik (önceki 15'ten)
         bg_x = self.style.left_margin
         
         bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0))
@@ -514,7 +517,7 @@ class ThumbnailCanvas:
         total_words = sum(count_words(t) for t in [main_hook, setup, revenge_line, extra_detail])
         self._adjust_for_perfect_fill(main_hook, setup, revenge_line, extra_detail, text_area_width, total_words)
         
-        revenge_area_height = 100
+        revenge_area_height = 120  # 🔧 Revenge area için daha fazla alan ayır
         total_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width)
         available_height = self.style.height - self.style.bottom_margin - revenge_area_height
         y = max(self.style.top_margin, (available_height - total_height) // 2)

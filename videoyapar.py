@@ -32,11 +32,17 @@ def kahraman_adini_al(protagonist_profile_text):
                 isim = icerik.split(",")[0].strip().split(" ")[0]
                 print(f"✅ Kahraman adı profilden okundu: {isim}")
                 return isim.upper()
-        print("⚠️ UYARI: Profil metninde 'Protagonist:' satırı bulunamadı.")
-        return "DANIEL" # Varsayılan isim
+        
+        # İsim bulunamazsa hata fırlat
+        raise Exception("❌ HATA: Profil metninde 'Protagonist:' satırı bulunamadı. Video oluşturulamaz.")
+        
     except Exception as e:
-        print(f"❌ Kahraman adı okunurken bir hata oluştu: {e}.")
-        return "DANIEL"
+        if "Protagonist:" in str(e):
+            # Protagonist bulunamadı hatası - direkt fırlat
+            raise e
+        else:
+            # Diğer hatalar için yeni hata mesajı
+            raise Exception(f"❌ HATA: Kahraman adı okunurken bir hata oluştu: {e}. Video oluşturulamaz.")
 
 def altyazi_parse(altyazi_dosyasi):
     """SRT dosyasını parse eder ve altyazı listesi döndürür."""
@@ -109,6 +115,7 @@ def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
 def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, protagonist_profile, output_dir):
     print("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
     
+    # İsim alınırken hata olursa burada durur
     kahraman_adi = kahraman_adini_al(protagonist_profile)
     altyazilar = altyazi_parse(srt_path)
     if not altyazilar: raise Exception("Altyazı dosyası okunamadı veya boş.")
@@ -169,7 +176,6 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
         altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
         
-        # HATA BURADAYDI: 'video_genisligi' yerine 'video_genislik' kullanılmalı.
         altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
 
         final_clip = CompositeVideoClip([
