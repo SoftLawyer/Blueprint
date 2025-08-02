@@ -1,27 +1,16 @@
-# Bu dosya, projenin çalışması için gereken tüm Python kütüphanelerini içerir.
-
-# Web sunucusu
-flask
-gunicorn
-
-# API ve dosya işlemleri
-requests
-google-cloud-storage
-google-cloud-secret-manager
-
-# Yapay Zeka Servisleri
-google-generativeai
+Flask==2.3.3
+gunicorn==21.2.0
+google-cloud-storage==2.10.0
+google-cloud-secret-manager==2.16.4
+google-generativeai==0.3.1
+requests==2.31.0
+Pillow==10.0.1
+numpy==1.24.3
+rembg==2.0.50
+opencv-python-headless==4.8.1.78
+moviepy==1.0.3
+imageio-ffmpeg==0.4.9
+git+https://github.com/openai/whisper.git
+onnxruntime==1.16.1
 google-cloud-texttospeech
-openai-whisper
-
-# Görüntü ve Video İşleme
-Pillow<10.0.0 # moviepy ile uyumluluk için versiyon sabitlendi
-moviepy
-imageio-ffmpeg
-opencv-python-headless
-rembg
-onnxruntime
-
-# Diğer
-numpy
-matplotlib
+matplotlib==3.7.2
