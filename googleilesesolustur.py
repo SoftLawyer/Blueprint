@@ -331,7 +331,7 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
             "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
             "audioConfig": {
                 "audioEncoding": "LINEAR16",
-                "speakingRate": 1.01,
+                "speakingRate": 0.99,
                 "sampleRateHertz": SAMPLE_RATE
             }
         }

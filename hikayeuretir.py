@@ -100,7 +100,7 @@ def configure_gemini():
         print(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 6000}
-        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
