@@ -15,7 +15,7 @@ google-cloud-texttospeech
 openai-whisper
 
 # Görüntü ve Video İşleme
-Pillow
+Pillow<10.0.0 # moviepy ile uyumluluk için versiyon sabitlendi
 moviepy
 imageio-ffmpeg
 opencv-python-headless
