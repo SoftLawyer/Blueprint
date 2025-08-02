@@ -447,8 +447,16 @@ def text_to_speech_chirp3_only(text, api_keys):
                 
                 # --- GÜNCELLEME: DOĞAL BİTİŞ İÇİN FADE-OUT UYGULA ---
                 final_audio = apply_fade_out(combined_audio_content)
+                
+                # --- YENİ EKLEME: SONA 10 SANİYE SESSİZLİK EKLE ---
+                print("➕ Sesin sonuna 10 saniye sessizlik ekleniyor...")
+                silence_duration_seconds = 10
+                num_silence_samples = int(silence_duration_seconds * SAMPLE_RATE)
+                silence_bytes = b'\x00\x00' * num_silence_samples
+                final_audio += silence_bytes
+                # --- YENİ EKLEME SONU ---
+                
                 return final_audio
-                # --- GÜNCELLEME SONU ---
 
             else:
                 print(f"⚠️ {successful_chunks}/{len(text_chunks)} parça başarılı, sonraki API anahtarı deneniyor...")
@@ -543,4 +551,3 @@ def run_audio_and_srt_process(story_text, output_dir, api_keys_list):
     srt_file_path = generate_synchronized_srt(audio_file_path, output_dir)
     
     return audio_file_path, srt_file_path
-
