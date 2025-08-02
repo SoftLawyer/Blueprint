@@ -1,5 +1,3 @@
-# googleilesesolustur.py
-
 import os
 import requests
 import json
@@ -8,12 +6,63 @@ import wave
 import base64
 import whisper
 import re
+import struct # Fade-out efekti için eklendi
 
 # Sabitler
-SAMPLE_RATE = 24000  
+SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 3500  # Güvenli limit
 MAX_SENTENCE_BYTES = 700  # Güvenli cümle limiti
 MAX_RECURSION_DEPTH = 3  # Sonsuz döngüyü önler
+
+# --- YENİ FONKSİYON: FADE-OUT EFEKTİ ---
+def apply_fade_out(audio_data, fade_duration_ms=500):
+    """
+    Ses verisinin sonuna yumuşak bir bitiş (linear fade-out) uygular.
+    Bu, sesin aniden kesilmesi yerine yavaşça kısılarak bitmesini sağlar.
+    """
+    try:
+        print(f"🌬️ Sona doğal bir bitiş için {fade_duration_ms}ms'lik 'fade-out' efekti uygulanıyor...")
+        sample_width = 2  # 16-bit ses (LINEAR16) için 2 byte
+        
+        # Fade-out uygulanacak sample (örnek) sayısı
+        fade_samples = int(SAMPLE_RATE * (fade_duration_ms / 1000.0))
+        
+        # Toplam sample sayısını hesapla
+        total_samples = len(audio_data) // sample_width
+        
+        # Fade-out yapılacak sample sayısı, toplam sample sayısından fazla olamaz
+        fade_samples = min(fade_samples, total_samples)
+
+        if fade_samples == 0:
+            return audio_data # Fade-out uygulanamayacak kadar kısa ses
+
+        # Sesi, fade-out uygulanacak ve uygulanmayacak kısım olarak ikiye ayır
+        main_part = audio_data[:-fade_samples * sample_width]
+        fade_part = audio_data[-fade_samples * sample_width:]
+
+        faded_audio = bytearray()
+        
+        # Fade-out kısmındaki her bir sample'ı işle
+        for i in range(fade_samples):
+            # Ses seviyesi çarpanını hesapla (1.0'dan 0.0'a doğru azalır)
+            multiplier = 1.0 - (i / fade_samples)
+            
+            # Mevcut sample'ı byte'lardan integer'a çevir
+            sample_bytes = fade_part[i * sample_width : (i + 1) * sample_width]
+            original_sample = struct.unpack('<h', sample_bytes)[0] # '<h' = little-endian, signed short
+            
+            # Sesi kıs ve yeni değeri hesapla
+            faded_sample = int(original_sample * multiplier)
+            
+            # Yeni değeri tekrar byte'a çevirip ekle
+            faded_audio.extend(struct.pack('<h', faded_sample))
+            
+        # Ana kısmı ve fade-out uygulanmış kısmı birleştir
+        return main_part + faded_audio
+        
+    except Exception as e:
+        print(f"⚠️ Fade-out uygulanamadı: {e}. Ses orjinal haliyle bırakılıyor.")
+        return audio_data
 
 def extract_target_sections(text):
     """STORY: ve VIEWER ENGAGEMENT: bölümlerini çıkarır"""
@@ -25,7 +74,6 @@ def extract_target_sections(text):
         print(repr(text[:200]))
         
         # DAHA ESNEK REGEX PATTERN'LER
-        # STORY: bölümünü bul - daha esnek pattern
         story_patterns = [
             r'STORY:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)',
             r'STORY:\s*\r?\n(.*?)(?=\r?\n\s*[-]{5,}|\r?\n\s*VIEWER ENGAGEMENT:|\Z)',
@@ -33,10 +81,9 @@ def extract_target_sections(text):
             r'(?i)story:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*viewer engagement:|\Z)'
         ]
         
-        # VIEWER ENGAGEMENT: bölümünü bul - daha esnek pattern
         engagement_patterns = [
             r'VIEWER ENGAGEMENT:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)',
-            r'VIEWER ENGAGEMENT:\s*\r?\n(.*?)(?=\r?\n\s*[-]{5,}|\Z)',
+            r'VIEWER ENGAGEMENT:\s*\r?\n(.*?)(?=\n\s*[-]{5,}|\Z)',
             r'VIEWER ENGAGEMENT:\s*(.*?)(?=\n\s*[-]{5,}|\Z)',
             r'(?i)viewer engagement:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)'
         ]
@@ -62,15 +109,6 @@ def extract_target_sections(text):
                 print("⚠️ STORY bölümü boş")
         else:
             print("❌ STORY bölümü bulunamadı")
-            # DEBUG: Metinde STORY kelimesi var mı?
-            if "STORY:" in text.upper():
-                print("🔍 DEBUG: STORY: kelimesi metinde mevcut, regex problemi olabilir")
-                # Manuel arama yap
-                story_index = text.upper().find("STORY:")
-                if story_index != -1:
-                    print(f"📍 STORY: pozisyonu: {story_index}")
-                    print(f"📋 STORY çevresindeki metin:")
-                    print(repr(text[story_index-20:story_index+100]))
         
         # VIEWER ENGAGEMENT bölümünü ara
         engagement_match = None
@@ -90,19 +128,10 @@ def extract_target_sections(text):
                 print("⚠️ VIEWER ENGAGEMENT bölümü boş")
         else:
             print("❌ VIEWER ENGAGEMENT bölümü bulunamadı")
-            # DEBUG
-            if "VIEWER ENGAGEMENT:" in text.upper():
-                print("🔍 DEBUG: VIEWER ENGAGEMENT: kelimesi metinde mevcut")
-                engagement_index = text.upper().find("VIEWER ENGAGEMENT:")
-                if engagement_index != -1:
-                    print(f"📍 VIEWER ENGAGEMENT: pozisyonu: {engagement_index}")
-                    print(f"📋 VIEWER ENGAGEMENT çevresindeki metin:")
-                    print(repr(text[engagement_index-20:engagement_index+100]))
         
         if sections_found == 0:
             print("❌ Hiçbir hedef bölüm bulunamadı!")
             print("🔍 FALLBACK: Tüm metni kullanacağım...")
-            # Son çare: tüm metni kullan
             return text.strip()
         
         extracted_text = extracted_text.strip()
@@ -119,7 +148,6 @@ def fix_long_sentences(text):
     """Uzun cümleleri doğal noktalarda böler"""
     print("🔧 Uzun cümleler kontrol ediliyor ve düzeltiliyor...")
     
-    # Cümleleri ayır
     sentences = re.split(r'(?<=[.!?])\s+', text)
     fixed_sentences = []
     
@@ -133,7 +161,7 @@ def fix_long_sentences(text):
         if sentence_bytes <= MAX_SENTENCE_BYTES:
             fixed_sentences.append(sentence)
         else:
-            print(f"   ⚠️ Uzun cümle bulundu: {sentence_bytes} byte - bölünüyor...")
+            print(f"    ⚠️ Uzun cümle bulundu: {sentence_bytes} byte - bölünüyor...")
             broken_parts = break_long_sentence_naturally(sentence)
             fixed_sentences.extend(broken_parts)
     
@@ -145,7 +173,6 @@ def break_long_sentence_naturally(sentence):
     """Cümleyi doğal noktalarda böler"""
     parts = []
     
-    # Doğal bölme noktaları (virgül, bağlaç, vs.)
     natural_patterns = [
         r'(,\s+(?:and|but|or|so|yet|for|nor)\s+)',
         r'(,\s+(?:however|therefore|moreover|furthermore|nevertheless)\s+)',
@@ -172,7 +199,6 @@ def break_long_sentence_naturally(sentence):
                     current_part = test_part
                 else:
                     if current_part.strip():
-                        # Nokta ekle eğer yoksa
                         if not current_part.rstrip().endswith(('.', '!', '?')):
                             current_part = current_part.rstrip() + '.'
                         temp_parts.append(current_part.strip())
@@ -186,7 +212,6 @@ def break_long_sentence_naturally(sentence):
             if len(temp_parts) > 1:
                 return temp_parts
     
-    # Doğal nokta bulunamazsa kelime bazında böl
     return break_by_words(sentence)
 
 def break_by_words(sentence):
@@ -218,14 +243,12 @@ def smart_text_splitter(text, max_length=API_CHUNK_SIZE):
     """Metni akıllı şekilde böler"""
     print("🧠 Metin akıllı şekilde bölünüyor...")
     
-    # Önce uzun cümleleri düzelt
     text = fix_long_sentences(text)
     
     chunks = []
     remaining_text = text
     
     while len(remaining_text.encode('utf-8')) > max_length:
-        # Güvenli bölme noktası bul
         split_pos = find_safe_split_position(remaining_text, max_length)
         
         if split_pos <= 0:
@@ -249,17 +272,14 @@ def find_safe_split_position(text, max_length):
         if len(text.encode('utf-8')) <= max_length:
             return len(text)
         
-        # Cümle sonu ara (en güvenli)
         for i in range(min(len(text), max_length), max_length // 2, -1):
             if i < len(text) and text[i-1] in '.!?':
                 return i
         
-        # Paragraf sonu ara
         paragraph_end = text.rfind('\n', 0, max_length)
         if paragraph_end > max_length // 2:
             return paragraph_end
         
-        # Kelime sonu ara
         word_end = text.rfind(' ', 0, max_length)
         if word_end > max_length // 2:
             return word_end
@@ -301,11 +321,10 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
     
     try:
         chunk_bytes = len(chunk.encode('utf-8'))
-        print(f"     📏 Parça {chunk_id} boyutu: {chunk_bytes} byte")
+        print(f"         📏 Parça {chunk_id} boyutu: {chunk_bytes} byte")
         
-        # Eğer chunk çok büyükse böl
         if chunk_bytes > 3000:
-            print(f"     🔪 Parça {chunk_id} çok büyük, bölünüyor...")
+            print(f"         🔪 Parça {chunk_id} çok büyük, bölünüyor...")
             smaller_chunks = smart_text_splitter(chunk, 2500)
             
             combined_audio = b''
@@ -323,7 +342,6 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
             
             return combined_audio if combined_audio else None
         
-        # API çağrısı
         url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
         
         data = {
@@ -342,10 +360,10 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
             result = response.json()
             if 'audioContent' in result:
                 audio_data = base64.b64decode(result['audioContent'])
-                print(f"     ✅ Parça {chunk_id} başarıyla işlendi")
+                print(f"         ✅ Parça {chunk_id} başarıyla işlendi")
                 return audio_data
             else:
-                print(f"     ❌ Parça {chunk_id}: Ses verisi bulunamadı")
+                print(f"         ❌ Parça {chunk_id}: Ses verisi bulunamadı")
                 return None
         else:
             error_msg = f"HTTP {response.status_code}"
@@ -355,11 +373,10 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
             except:
                 pass
             
-            print(f"     ❌ Parça {chunk_id} API hatası: {error_msg}")
+            print(f"         ❌ Parça {chunk_id} API hatası: {error_msg}")
             
-            # Eğer hala cümle uzunluk hatası alıyorsak
             if ("too long" in error_msg.lower() or "900 bytes" in error_msg) and recursion_depth < MAX_RECURSION_DEPTH:
-                print(f"     🔪 Parça {chunk_id} daha küçük parçalara bölünüyor...")
+                print(f"         🔪 Parça {chunk_id} daha küçük parçalara bölünüyor...")
                 ultra_small_chunks = smart_text_splitter(chunk, 1500)
                 
                 combined_audio = b''
@@ -380,11 +397,11 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
             return None
             
     except Exception as e:
-        print(f"     ❌ Parça {chunk_id} beklenmeyen hata: {e}")
+        print(f"         ❌ Parça {chunk_id} beklenmeyen hata: {e}")
         return None
 
 def text_to_speech_chirp3_only(text, api_keys):
-    """Ana TTS fonksiyonu"""
+    """Ana TTS fonksiyonu - GÜNCELLENDİ"""
     try:
         print("🔍 API anahtarları test ediliyor...")
         valid_keys = []
@@ -399,7 +416,6 @@ def text_to_speech_chirp3_only(text, api_keys):
         
         print(f"✅ {len(valid_keys)} geçerli API anahtarı bulundu")
 
-        # Metni böl
         text_chunks = smart_text_splitter(text)
         print(f"ℹ️ Metin {len(text_chunks)} parçaya bölündü")
 
@@ -409,7 +425,7 @@ def text_to_speech_chirp3_only(text, api_keys):
             successful_chunks = 0
             
             for i, chunk in enumerate(text_chunks, 1):
-                print(f"  ➡️ Parça {i}/{len(text_chunks)} işleniyor...")
+                print(f"    ➡️ Parça {i}/{len(text_chunks)} işleniyor...")
                 
                 audio_data = process_single_chunk(chunk, api_key, str(i))
                 
@@ -417,18 +433,23 @@ def text_to_speech_chirp3_only(text, api_keys):
                     combined_audio_content += audio_data
                     successful_chunks += 1
                     
-                    # Parçalar arası kısa sessizlik ekle (daha doğal geçiş için)
+                    # Parçalar arası kısa sessizlik ekle
                     if i < len(text_chunks):
-                        silence_duration = 0.2  # 200ms sessizlik
+                        silence_duration = 0.2  # 200ms
                         silence_samples = int(SAMPLE_RATE * silence_duration)
                         silence = b'\x00\x00' * silence_samples
                         combined_audio_content += silence
                 else:
-                    print(f"  ❌ Parça {i} başarısız")
+                    print(f"    ❌ Parça {i} başarısız")
             
             if successful_chunks == len(text_chunks):
                 print(f"✅ Tüm parçalar başarıyla işlendi!")
-                return combined_audio_content
+                
+                # --- GÜNCELLEME: DOĞAL BİTİŞ İÇİN FADE-OUT UYGULA ---
+                final_audio = apply_fade_out(combined_audio_content)
+                return final_audio
+                # --- GÜNCELLEME SONU ---
+
             else:
                 print(f"⚠️ {successful_chunks}/{len(text_chunks)} parça başarılı, sonraki API anahtarı deneniyor...")
         
@@ -449,7 +470,7 @@ def save_audio(audio_content, output_dir, filename='ses.wav'):
         full_path = os.path.join(output_dir, filename)
         with wave.open(full_path, 'wb') as wav_file:
             wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
+            wav_file.setsampwidth(2) # 16-bit
             wav_file.setframerate(SAMPLE_RATE)
             wav_file.writeframes(audio_content)
         
@@ -476,7 +497,7 @@ def generate_synchronized_srt(audio_file_path, output_dir):
     """Whisper ile senkronize SRT altyazısı oluşturur."""
     try:
         print(f"\n🤖 Whisper modeli yükleniyor...")
-        model = whisper.load_model("base") 
+        model = whisper.load_model("base")  
         print(f"🎤 Ses dosyası deşifre ediliyor...")
         result = model.transcribe(audio_file_path, fp16=False, language="en") 
 
@@ -501,15 +522,14 @@ def run_audio_and_srt_process(story_text, output_dir, api_keys_list):
     """Ana ses ve senkronize altyazı üretme iş akışını yönetir."""
     print("--- Ses ve Senkronize Altyazı Üretim Modülü Başlatıldı ---")
     
-    # Sadece STORY: ve VIEWER ENGAGEMENT: bölümlerini çıkar
     target_text = extract_target_sections(story_text)
     if not target_text:
         raise Exception("Hedef bölümler bulunamadı!")
     
     print(f"\n📊 İşlenecek metin bilgileri:")
-    print(f"   📝 Karakter: {len(target_text):,}")
-    print(f"   📝 Kelime: {len(target_text.split()):,}")
-    print(f"   📝 Byte: {len(target_text.encode('utf-8')):,}")
+    print(f"    📝 Karakter: {len(target_text):,}")
+    print(f"    📝 Kelime: {len(target_text.split()):,}")
+    print(f"    📝 Byte: {len(target_text.encode('utf-8')):,}")
     
     print("\n🎵 Chirp3-HD-Enceladus sesi ile işleniyor...")
     audio_content = text_to_speech_chirp3_only(target_text, api_keys_list)
@@ -523,3 +543,4 @@ def run_audio_and_srt_process(story_text, output_dir, api_keys_list):
     srt_file_path = generate_synchronized_srt(audio_file_path, output_dir)
     
     return audio_file_path, srt_file_path
+
