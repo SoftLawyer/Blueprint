@@ -12,7 +12,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None 
 project_id = "videofabrikam"
-TEST_MODE = False # Tam hikaye üretimi için bu False olmalıdır
+TEST_MODE = True # Tam hikaye üretimi için bu False olmalıdır
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 
@@ -204,34 +204,94 @@ class YouTubeRevengeStoryGenerator:
             print(f"❌ Mevcut başlık GCS'e kaydedilirken hata oluştu: {e}")
 
     def generate_protagonist_profile(self, story_title):
-        prompt = f"""Based on this story title: "{story_title}"... (Sizin Orijinal Prompt'unuz)"""
+        """🔄 Windows uyumlu versiyondaki ile aynı prompt ve format kullanır."""
+        prompt = f"""Based on this story title: "{story_title}"
+
+Create a protagonist profile in this EXACT format:
+
+Protagonist: [FICTIONAL First Name Last Name], [age 32-58]
+Company: [FICTIONAL Company Name] ([industry type])
+Location: [US City]
+Crisis: [Brief description of the main crisis/conflict]
+
+Requirements:
+- ALL names must be completely FICTIONAL
+- The Protagonist must only be an American male
+- Choose appropriate industry based on the title
+- Age between 32-58
+- US location that fits the story
+- Crisis should match the title's theme
+- Keep it concise - one line each
+
+Example format:
+Protagonist: George Chen, 45
+Company: TechFlow Systems (software)
+Location: Austin
+Crisis: Data breach affecting major clients
+
+Write ONLY the 4-line profile, nothing else."""
+        
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
-        prompt = f"""Based on this story title: "{story_title}" and story content, create a compelling viewer engagement prompt that encourages comments, likes, and subscriptions.
+        """🔄 Windows uyumlu versiyondaki ile aynı prompt kullanır."""
+        prompt = f"""Based on this story title: "{story_title}" and the story content, create ONE SINGLE engagement prompt for viewers.
 
-The engagement prompt should:
-- Ask viewers what they think about the story
-- Encourage them to share similar experiences
-- Ask for their opinion on the protagonist's actions
-- Include a call-to-action for likes and subscriptions
-- Be conversational and engaging
-- Be 2-3 sentences long
+Choose ONE of these types:
+1. A specific question asking "What would you do?"
+2. An invitation to share similar experiences in comments
+3. A moral/ethical question about the situation
+4. A request for advice/opinions from viewers
 
-Write ONLY the engagement prompt, nothing else."""
+Requirements:
+- Write ONLY ONE engagement prompt
+- Make it specific to this story's theme
+- Use casual, conversational tone
+- Include 1-2 relevant emojis
+- Keep it engaging for video viewers
+- Make it feel natural and authentic
+- Encourage comments and discussion
+
+Write ONLY ONE prompt that fits this specific story perfectly."""
         
         response = generate_with_failover(prompt)
-        return response.text.strip() if response and hasattr(response, 'text') else "What do you think about this story? Have you ever experienced something similar? Let me know in the comments below and don't forget to like and subscribe for more stories!"
+        return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_opening_section(self, story_title, protagonist_profile):
-        prompt = f"""Write ONLY the first section (Dramatic Opening)... (Sizin Orijinal Prompt'unuz)"""
+        """🔄 Windows uyumlu versiyondaki ile aynı prompt kullanır."""
+        prompt = f"""Write ONLY the first section (Dramatic Opening) of a revenge story for storytelling purposes.
+
+STORY TITLE: "{story_title}"
+
+PROTAGONIST PROFILE:
+{protagonist_profile}
+
+SECTION 1: DRAMATIC OPENING (~140 words)
+- Start with dramatic dialogue or action that hooks the listener
+- Use the protagonist's name and company from the profile
+- Set the tone for a revenge/justice story
+- Create immediate tension or conflict
+- Use authentic storytelling style perfect for narration
+- Make it compelling and engaging for audio/video content
+
+Requirements:
+- Approximately 140 words (VERY CONCISE for optimal pacing)
+- Dramatic dialogue or action
+- Hook the audience immediately
+- Set up the conflict
+- Match the title's theme and protagonist profile
+- Use the FICTIONAL names from the profile
+- Perfect for storytelling/narration format
+
+Write ONLY this opening section - do not continue with other parts of the story."""
+        
         response = generate_with_failover(prompt)
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     # --- YENİ VE GÜÇLENDİRİLMİŞ HİKAYE ÜRETME FONKSİYONU ---
     def generate_story_from_title(self, story_title, protagonist_profile):
-        """Hikayeyi bölüm bölüm oluşturur."""
+        """🎯 25-29 DAKİKA İÇİN ULTRA KISALTILMIŞ HİKAYE OLUŞTURUR."""
         print(f"🔄 '{story_title}' başlığına göre ULTRA KISALTILMIŞ hikaye (25-29 dk) BÖLÜM BÖLÜM oluşturuluyor...")
         
         full_story_parts = []
@@ -280,6 +340,8 @@ ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count ever
             response = generate_with_failover(prompt)
             if response and hasattr(response, 'text'):
                 section_text = response.text.strip()
+                
+                # 🎯 Kelime sayısını kontrol et ve gerekirse kısalt
                 words = section_text.split()
                 if len(words) > section_words:
                     print(f"  ⚠️ Bölüm {i} çok uzun ({len(words)} kelime), {section_words} kelimeye kısaltılıyor...")
@@ -289,17 +351,22 @@ ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count ever
                 story_so_far += section_text + "\n\n"
                 word_count = len(section_text.split())
                 print(f"  ✅ Bölüm {i} tamamlandı ({word_count} kelime - Hedef: {section_words}).")
-                time.sleep(3)
+                time.sleep(3)  # Daha hızlı işlem
             else:
                 print(f"  ❌ Bölüm {i} oluşturulamadı! Hikaye üretimi durduruluyor.")
                 return None
         
         final_story = "\n\n".join(full_story_parts)
         total_words = len(final_story.split())
-        estimated_minutes = total_words / 170
+        estimated_minutes = total_words / 170  # Daha hızlı konuşma hızı varsayımı
         print(f"\n✅ ULTRA KISALTILMIŞ hikaye tamamlandı!")
         print(f"📊 Toplam kelime: {total_words}")
         print(f"⏱️ Tahmini süre: {estimated_minutes:.1f} dakika")
+        
+        # 🎯 Eğer hala çok uzunsa uyarı ver
+        if estimated_minutes > 29:
+            print(f"⚠️ UYARI: Hikaye hala {estimated_minutes:.1f} dakika. Daha fazla kısaltma gerekebilir.")
+        
         return final_story
 
     def format_story_for_saving(self, story, title, protagonist_profile, engagement_prompt, is_opening_only=False):
@@ -319,6 +386,9 @@ ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count ever
         
         if not is_opening_only:
             content_parts.append("STORY STRUCTURE (ULTRA-OPTIMIZED FOR 25-29 MINUTES):")
+            total_target_words = sum(section['words'] for section in self.story_structure.values())
+            estimated_minutes = total_target_words / 170
+            content_parts.append(f"Target Total: ~{total_target_words} words (~{estimated_minutes:.1f} minutes)")
             for i, section in self.story_structure.items():
                 content_parts.append(f"{i}. {section['name']} (~{section['words']} words)")
         else:
@@ -371,6 +441,7 @@ def run_story_generation_process(kaynak_bucket_adi, cikti_bucket_adi):
     story_content = None
     if TEST_MODE:
         story_content = generator.generate_opening_section(story_title, protagonist_profile)
+        print("✅ Hikaye açılışı oluşturuldu (TEST MODE).")
     else:
         story_content = generator.generate_story_from_title(story_title, protagonist_profile)
 
