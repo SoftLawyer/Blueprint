@@ -10,7 +10,7 @@ import re
 # --- Global Değişkenler ---
 API_KEYS = []
 current_api_key_index = 0
-model = None 
+model = None
 project_id = "videofabrikam"
 TEST_MODE = True # Tam hikaye üretimi için bu False olmalıdır
 
@@ -45,7 +45,7 @@ def configure_gemini():
         print(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 6000}
-        model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
         print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -147,7 +147,7 @@ def fix_missing_sections(formatted_text, story_title, story_content, engagement_
     else:
         # Mevcut STORY bölümünü koru
         story_match = re.search(r'(STORY:.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)', 
-                               formatted_text, re.DOTALL | re.IGNORECASE)
+                                  formatted_text, re.DOTALL | re.IGNORECASE)
         if story_match:
             fixed_parts.append(story_match.group(1))
     
@@ -162,7 +162,7 @@ def fix_missing_sections(formatted_text, story_title, story_content, engagement_
     else:
         # Mevcut VIEWER ENGAGEMENT bölümünü koru
         engagement_match = re.search(r'(VIEWER ENGAGEMENT:.*?)(?=\n\s*[-]{5,}|\Z)', 
-                                   formatted_text, re.DOTALL | re.IGNORECASE)
+                                      formatted_text, re.DOTALL | re.IGNORECASE)
         if engagement_match:
             fixed_parts.extend(["\n" + "-"*40 + "\n", engagement_match.group(1)])
     
@@ -175,10 +175,10 @@ class YouTubeRevengeStoryGenerator:
     def __init__(self):
         # Sizin ultra-kısaltılmış, 25-29 dakikalık yapılandırmanız
         self.story_structure = {
-            1: {"name": "Dramatic Opening", "words": 140}, 2: {"name": "Character Intro", "words": 240},
-            3: {"name": "Backstory", "words": 580}, 4: {"name": "Betrayal Process", "words": 680},
-            5: {"name": "Calm Reaction", "words": 520}, 6: {"name": "Strategic Move", "words": 1200},
-            7: {"name": "Natural Justice", "words": 850}, 8: {"name": "Moral Victory", "words": 450}
+            1: {"name": "Dramatic Opening", "words": 130}, 2: {"name": "Character Intro", "words": 230},
+            3: {"name": "Backstory", "words": 570}, 4: {"name": "Betrayal Process", "words": 670},
+            5: {"name": "Calm Reaction", "words": 510}, 6: {"name": "Strategic Move", "words": 1100},
+            7: {"name": "Natural Justice", "words": 840}, 8: {"name": "Moral Victory", "words": 440}
         }
 
     def get_and_update_next_title(self, bucket, source_filename="hikayelerbasligi.txt"):
@@ -235,7 +235,7 @@ Write ONLY the 4-line profile, nothing else."""
         return response.text.strip() if response and hasattr(response, 'text') else None
 
     def generate_single_engagement_prompt(self, story_title, story_content):
-        """🔄 Windows uyumlu versiyondaki ile aynı prompt kullanır."""
+        """🔄 Windows uyumlu versiyondaki ile aynı prompt kullanır. EMOJİLER KALDIRILDI."""
         prompt = f"""Based on this story title: "{story_title}" and the story content, create ONE SINGLE engagement prompt for viewers.
 
 Choose ONE of these types:
@@ -245,13 +245,13 @@ Choose ONE of these types:
 4. A request for advice/opinions from viewers
 
 Requirements:
-- Write ONLY ONE engagement prompt
-- Make it specific to this story's theme
-- Use casual, conversational tone
-- Include 1-2 relevant emojis
-- Keep it engaging for video viewers
-- Make it feel natural and authentic
-- Encourage comments and discussion
+- Write ONLY ONE engagement prompt.
+- Make it specific to this story's theme.
+- Use casual, conversational tone.
+- DO NOT include any emojis.
+- Keep it engaging for video viewers.
+- Make it feel natural and authentic.
+- Encourage comments and discussion.
 
 Write ONLY ONE prompt that fits this specific story perfectly."""
         
@@ -301,7 +301,7 @@ Write ONLY this opening section - do not continue with other parts of the story.
             section_name = section_info["name"]
             section_words = section_info["words"]
             
-            print(f"\n  ➡️ Bölüm {i}/{len(self.story_structure)}: '{section_name}' (~{section_words} kelime) oluşturuluyor...")
+            print(f"\n   ➡️  Bölüm {i}/{len(self.story_structure)}: '{section_name}' (~{section_words} kelime) oluşturuluyor...")
             
             prompt = f"""You are a master storyteller writing a compelling revenge story for a YouTube video.
 
@@ -344,16 +344,16 @@ ABSOLUTE LIMIT: Write MAXIMUM {section_words} words for this section. Count ever
                 # 🎯 Kelime sayısını kontrol et ve gerekirse kısalt
                 words = section_text.split()
                 if len(words) > section_words:
-                    print(f"  ⚠️ Bölüm {i} çok uzun ({len(words)} kelime), {section_words} kelimeye kısaltılıyor...")
+                    print(f"   ⚠️  Bölüm {i} çok uzun ({len(words)} kelime), {section_words} kelimeye kısaltılıyor...")
                     section_text = ' '.join(words[:section_words])
                 
                 full_story_parts.append(section_text)
                 story_so_far += section_text + "\n\n"
                 word_count = len(section_text.split())
-                print(f"  ✅ Bölüm {i} tamamlandı ({word_count} kelime - Hedef: {section_words}).")
+                print(f"   ✅  Bölüm {i} tamamlandı ({word_count} kelime - Hedef: {section_words}).")
                 time.sleep(3)  # Daha hızlı işlem
             else:
-                print(f"  ❌ Bölüm {i} oluşturulamadı! Hikaye üretimi durduruluyor.")
+                print(f"   ❌  Bölüm {i} oluşturulamadı! Hikaye üretimi durduruluyor.")
                 return None
         
         final_story = "\n\n".join(full_story_parts)
