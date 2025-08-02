@@ -7,7 +7,7 @@ gunicorn
 # API ve dosya işlemleri
 requests
 google-cloud-storage
-google-cloud-secretmanager
+google-cloud-secret-manager
 
 # Yapay Zeka Servisleri
 google-generativeai
