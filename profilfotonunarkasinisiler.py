@@ -6,6 +6,8 @@ from PIL import Image
 import numpy as np
 import cv2 # OpenCV kütüphanesi
 import io
+import time # <--- BU SATIRI EKLEYİN
+
 
 # --- SİZİN ORİJİNAL YARDIMCI FONKSİYONLARINIZ ---
 # Bu fonksiyonlar, sizin yazdığınız gibi yüz, ten ve saç algılama işlemlerini yapar.
