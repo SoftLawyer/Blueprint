@@ -1,4 +1,4 @@
-# worker.py - Video Fabrikası İşçi Scripti
+# worker.py - Video Fabrikası İşçi Scripti (GCS'e Hata Kaydı Yapan Versiyon)
 # Bu script, sanal makinede sürekli çalışarak GCS'ten görevleri alır ve video üretir.
 
 import os
@@ -18,6 +18,7 @@ import videoyapar
 import kucukresimolusturur
 
 from google.cloud import storage
+from google.api_core import exceptions
 
 # --- TEMEL AYARLAR ---
 logging.basicConfig(
@@ -28,62 +29,41 @@ logging.basicConfig(
 
 KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
 CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
-HATALI_BASLIKLAR_DOSYASI = "tamamlanamayanbasliklar.txt"
+HATALI_BASLIKLAR_DOSYASI = "tamamlanamayanbasliklar.txt" # GCS'teki dosya adı
 
-def get_and_lock_title(storage_client, bucket_name, source_filename="hikayelerbasligi.txt"):
+def log_failed_title_to_gcs(storage_client, bucket_name, title, error_details):
     """
-    GCS'ten bir başlık alır ve birden fazla worker'ın aynı başlığı almasını önler.
-    Bu basit bir "optimistic locking" yöntemidir.
-    """
-    kaynak_bucket = storage_client.bucket(bucket_name)
-    blob = kaynak_bucket.blob(source_filename)
-
-    for attempt in range(5): # Çakışma durumunda birkaç kez dene
-        try:
-            # Blob'un mevcut "generation" numarasını al. Bu, dosyanın o anki versiyonudur.
-            blob.reload()
-            current_generation = blob.generation
-
-            lines = blob.download_as_text(encoding="utf-8").strip().splitlines()
-            
-            if not lines:
-                return None # İşlenecek başlık yok
-
-            title_to_process = lines[0].strip()
-            remaining_lines = "\n".join(lines[1:])
-
-            # Dosyayı GÜNCELLERKEN, sadece bizim okuduğumuz versiyon ise güncellemeye izin ver.
-            # Eğer başka bir worker bizden önce dosyayı güncellediyse, "generation" numarası değişir
-            # ve bu komut hata verir (PreconditionFailed).
-            blob.upload_from_string(remaining_lines, content_type="text/plain; charset=utf-8", if_generation_match=current_generation)
-            
-            logging.info(f"Başlık başarıyla alındı ve kilitlendi: '{title_to_process}'")
-            return title_to_process
-
-        except exceptions.PreconditionFailed:
-            logging.warning(f"Başlık çakışması tespit edildi. Başka bir worker başlığı aldı. Tekrar deneniyor... ({attempt+1}/5)")
-            time.sleep(2) # Kısa bir süre bekle ve tekrar dene
-        except Exception as e:
-            logging.error(f"Başlık alınırken beklenmedik hata: {e}")
-            return None
-    
-    logging.error("Başlık çakışması çözülemedi. Bir süre sonra tekrar denenecek.")
-    return None
-
-
-def log_failed_title(title, error_details):
-    """
-    Başarısız olan video başlığını ve hata detayını yerel dosyaya yazar.
+    Başarısız olan video başlığını ve hata detayını GCS'teki merkezi bir dosyaya ekler.
     """
     try:
-        with open(HATALI_BASLIKLAR_DOSYASI, "a", encoding="utf-8") as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"[{timestamp}] - BAŞLIK: {title}\n")
-            f.write(f"HATA DETAYI: {error_details}\n")
-            f.write("-" * 50 + "\n")
-        logging.info(f"Hatalı başlık dosyaya kaydedildi: {title}")
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(HATALI_BASLIKLAR_DOSYASI)
+
+        # Mevcut hata dosyasını oku (varsa)
+        try:
+            existing_content = blob.download_as_text()
+        except exceptions.NotFound:
+            existing_content = ""
+
+        # Yeni hata bilgisini oluştur
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_log_entry = (
+            f"[{timestamp}] - BAŞLIK: {title}\n"
+            f"HATA DETAYI: {error_details}\n"
+            f"{'-'*80}\n"
+        )
+
+        # Yeni hatayı mevcut içeriğin başına ekle (en son hata en üstte görünür)
+        updated_content = new_log_entry + existing_content
+
+        # Güncellenmiş dosyayı GCS'e geri yükle
+        blob.upload_from_string(updated_content, content_type="text/plain; charset=utf-8")
+        
+        logging.info(f"Hatalı başlık GCS'teki merkezi dosyaya kaydedildi: gs://{bucket_name}/{HATALI_BASLIKLAR_DOSYASI}")
+
     except Exception as e:
-        logging.error(f"Hatalı başlık dosyasına yazılırken hata oluştu: {e}")
+        logging.error(f"GCS'teki hata dosyasına yazılırken kritik bir hata oluştu: {e}")
+
 
 def main_loop():
     """
@@ -97,15 +77,8 @@ def main_loop():
         temp_dir = None
         
         try:
-            # 1. ADIM: GÖREV ALMA
-            # story_title = get_and_lock_title(storage_client, KAYNAK_BUCKET_ADI)
-            
-            # NOT: hikayeuretir modülünüz zaten başlık alıp güncellemeyi yapıyor.
-            # Şimdilik onu kullanmaya devam edelim. Daha sonra yukarıdaki kilitli
-            # fonksiyona geçilebilir.
-            
             # ==============================================================================
-            # ADIM 2: HİKAYE ÜRETİMİ
+            # ADIM 1: HİKAYE ÜRETİMİ
             # ==============================================================================
             logging.info("Yeni bir görev döngüsü başlatılıyor. Konu seçiliyor...")
             (
@@ -126,7 +99,7 @@ def main_loop():
             logging.info(f"✅ Hikaye başarıyla oluşturuldu. Başlık: '{story_title}'")
             
             # Geçici bir klasör oluştur
-            temp_dir = tempfile.mkdtemp()
+            temp_dir = tempfile.mkdtemp(dir="/tmp")
             logging.info(f"Geçici çalışma klasörü oluşturuldu: {temp_dir}")
 
             formatted_story_path = os.path.join(temp_dir, "hikaye_formatli.txt")
@@ -134,7 +107,7 @@ def main_loop():
                 f.write(formatted_text)
 
             # ==============================================================================
-            # ADIM 3: SESLENDİRME VE ALTYAZI
+            # ADIM 2: SESLENDİRME VE ALTYAZI
             # ==============================================================================
             logging.info("Seslendirme ve senkronize altyazı üretimi başlıyor...")
             audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(
@@ -147,7 +120,7 @@ def main_loop():
             logging.info("✅ Ses ve altyazı başarıyla oluşturuldu.")
 
             # ==============================================================================
-            # ADIM 4: PROFİL FOTOĞRAFI ÜRETİMİ
+            # ADIM 3: PROFİL FOTOĞRAFI ÜRETİMİ
             # ==============================================================================
             logging.info("Profil fotoğrafı üretimi başlıyor...")
             original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(
@@ -159,7 +132,7 @@ def main_loop():
             logging.info("✅ Profil fotoğrafı ve küçük resim versiyonu başarıyla üretildi.")
 
             # ==============================================================================
-            # ADIM 5: ARKA PLAN TEMİZLEME
+            # ADIM 4: ARKA PLAN TEMİZLEME
             # ==============================================================================
             logging.info("Profil fotoğrafının arka planı temizleniyor...")
             cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(
@@ -171,7 +144,7 @@ def main_loop():
             logging.info("✅ Arka plan başarıyla temizlendi.")
 
             # ==============================================================================
-            # ADIM 6: VİDEO BİRLEŞTİRME
+            # ADIM 5: VİDEO BİRLEŞTİRME
             # ==============================================================================
             logging.info("Video birleştirme işlemi başlıyor...")
             
@@ -193,7 +166,7 @@ def main_loop():
             logging.info("✅ Video başarıyla birleştirildi.")
 
             # ==============================================================================
-            # ADIM 7: YOUTUBE KÜÇÜK RESMİ OLUŞTURMA
+            # ADIM 6: YOUTUBE KÜÇÜK RESMİ OLUŞTURMA
             # ==============================================================================
             logging.info("YouTube küçük resmi oluşturuluyor...")
             final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
@@ -207,7 +180,7 @@ def main_loop():
             logging.info("✅ YouTube küçük resmi başarıyla oluşturuldu.")
 
             # ==============================================================================
-            # ADIM 8: ÇIKTILARI GCS'E YÜKLEME
+            # ADIM 7: ÇIKTILARI GCS'E YÜKLEME
             # ==============================================================================
             logging.info("Üretilen dosyalar Cloud Storage'a yükleniyor...")
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
@@ -238,7 +211,7 @@ def main_loop():
             logging.error(f"❌ HATA OLUŞTU: '{story_title}' başlıklı video üretilemedi. ❌")
             logging.error(error_details)
             if story_title:
-                log_failed_title(story_title, str(e))
+                log_failed_title_to_gcs(storage_client, CIKTI_BUCKET_ADI, story_title, str(e))
 
         finally:
             # Geçici klasörü her durumda temizle
