@@ -47,7 +47,7 @@ def configure_gemini():
         genai.configure(api_key=api_key)
         generation_config = {"temperature": 0.9, "top_p": 0.95, "top_k": 40, "max_output_tokens": 8192} # Token limitini artırdık
         # Model adını daha stabil bir versiyonla güncelledik
-        model = genai.GenerativeModel(model_name="gemini-1.5-flash", generation_config=generation_config)
+        model = genai.GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
         logging.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
