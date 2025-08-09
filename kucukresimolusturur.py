@@ -7,7 +7,7 @@ import re
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional # YENİ: Optional import edildi
 
 # --- Vertex AI ve Gerekli Kütüphaneler ---
 try:
@@ -67,7 +67,8 @@ def configure_vertex_ai_for_thumbnail():
         logging.error(f"❌ Thumbnail üretimi için Vertex AI başlatılırken bir hata oluştu: {e}")
         return False
 
-def ask_vertex_ai(prompt: str) -> Mapping[str, str] | None:
+# DÜZELTİLMİŞ FONKSİYON İMZASI
+def ask_vertex_ai(prompt: str) -> Optional[Mapping[str, str]]:
     global model
     if not model: return None
     try:
@@ -210,7 +211,6 @@ class ThumbnailCanvas:
         text_y = bg_y + padding
         self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour)
 
-    # DÜZELTİLMİŞ FONKSİYON
     def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
         try:
             avatar = Image.open(img_path).convert("RGBA")
