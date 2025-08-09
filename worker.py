@@ -1,4 +1,4 @@
-# worker.py (v4 - Tamamen Anahtarsız ve Temizlenmiş Versiyon)
+# worker.py (v5 - Metadata Hatası Düzeltilmiş)
 
 import os
 import logging
@@ -34,37 +34,57 @@ HATALI_BASLIKLAR_DOSYASI = "tamamlanamayanbasliklar.txt"
 HATALAR_LOG_DOSYASI = "hatalarblogu.txt"
 IDLE_SHUTDOWN_SECONDS = 600 # 10 dakika
 
-# --- Yardımcı Fonksiyonlar ---
-def get_instance_metadata(metadata_key):
+# --- DÜZELTİLMİŞ METADATA FONKSİYONLARI ---
+
+def get_metadata(metadata_path):
+    """Sanal makinenin metadata sunucusundan bilgi alır."""
     try:
         response = requests.get(
-            f"http://metadata.google.internal/computeMetadata/v1/instance/{metadata_key}",
-            headers={'Metadata-Flavor': 'Google'}, timeout=5
+            f"http://metadata.google.internal/computeMetadata/v1/{metadata_path}",
+            headers={'Metadata-Flavor': 'Google'},
+            timeout=5
         )
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        logging.error(f"Metadata sunucusundan bilgi alınamadı ({metadata_key}): {e}")
+        logging.error(f"Metadata sunucusundan bilgi alınamadı ({metadata_path}): {e}")
         return None
 
 def shutdown_instance_group():
+    """Mevcut sanal makinenin ait olduğu Yönetilen Örnek Grubunu (MIG) kapatır."""
     logging.warning("10 dakikadır boşta. Kapatma prosedürü başlatılıyor...")
     try:
-        zone_full = get_instance_metadata("zone")
-        instance_name = get_instance_metadata("name")
-        if not zone_full or not instance_name:
-            logging.error("Zone veya instance adı alınamadığı için kapatma işlemi iptal edildi.")
+        zone_full = get_metadata("instance/zone")
+        if not zone_full:
+            logging.error("Zone bilgisi alınamadığı için kapatma işlemi iptal edildi.")
             return
         zone = zone_full.split('/')[-1]
+
+        instance_name = get_metadata("instance/name")
+        if not instance_name:
+            logging.error("Instance adı alınamadığı için kapatma işlemi iptal edildi.")
+            return
+
         if "fabrika-isci" in instance_name:
             group_name = "video-fabrikasi-grubu"
-            command = ["gcloud", "compute", "instance-groups", "managed", "resize", group_name, "--size=0", f"--zone={zone}", "--quiet"]
+            logging.info(f"Ait olunan grup: {group_name}, Zone: {zone}")
+            command = [
+                "gcloud", "compute", "instance-groups", "managed",
+                "resize", group_name,
+                "--size=0",
+                f"--zone={zone}",
+                "--quiet"
+            ]
             subprocess.run(command, check=True)
             logging.info(f"{group_name} başarıyla kapatıldı.")
+        else:
+            logging.warning("Bu makine bir yönetilen gruba ait görünmüyor. Kapatma işlemi atlandı.")
+
     except Exception as e:
         logging.error(f"Instance grubunu kapatırken hata oluştu: {e}")
 
 def log_error_to_gcs(storage_client, bucket_name, filename, title, error_details):
+    """Hata loglarını GCS'teki merkezi bir dosyaya ekler."""
     try:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(filename)
@@ -91,7 +111,7 @@ def main_loop():
     idle_start_time = None
     logging.info("🚀 Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
     
-    worker_project_id = os.environ.get("GCP_PROJECT") or get_instance_metadata("project/project-id")
+    worker_project_id = os.environ.get("GCP_PROJECT") or get_metadata("project/project-id")
     if not worker_project_id:
         logging.critical("❌ Makinenin Proje ID'si alınamadı! Worker durduruluyor.")
         return
@@ -152,7 +172,7 @@ def main_loop():
                     blob = cikti_bucket.blob(f"{safe_folder_name}/{filename}")
                     blob.upload_from_filename(local_path)
             
-            logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉�")
+            logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉🎉")
 
         except Exception as e:
             error_details = traceback.format_exc()
@@ -165,7 +185,6 @@ def main_loop():
                 shutil.rmtree(temp_dir)
             logging.info("-" * 80)
             time.sleep(5)
-
 
 if __name__ == "__main__":
     main_loop()
