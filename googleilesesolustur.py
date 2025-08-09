@@ -1,4 +1,4 @@
-# googleilesesolustur.py (Nihai Versiyon - Secret Manager, Chirp3 Sesi, WAV)
+# googleilesesolustur.py (v5 - Girinti Hatası Düzeltilmiş)
 
 import os
 import re
@@ -21,9 +21,9 @@ except ImportError:
 SERVICE_ACCOUNT_SECRET_NAME = "vertex-ai-sa-key"
 temp_key_path = None
 
-# --- Sabitler (İsteğiniz Üzerine Güncellendi) ---
+# Sabitler
 SAMPLE_RATE = 24000
-API_CHUNK_SIZE = 3000 # Kesinlikle 3000 olarak ayarlandı
+API_CHUNK_SIZE = 3000
 MAX_RECURSION_DEPTH = 3
 
 # --- Güvenli Kimlik Doğrulama Fonksiyonu ---
@@ -59,7 +59,6 @@ def process_single_chunk_tts(client, chunk, chunk_id, recursion_depth=0):
         return None
     try:
         synthesis_input = texttospeech.SynthesisInput(text=chunk)
-        # İsteğiniz üzerine ses modeli 'en-US-Chirp3-HD-Enceladus' olarak güncellendi.
         voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Chirp3-HD-Enceladus")
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
@@ -152,17 +151,33 @@ def extract_target_sections(text):
     except Exception as e:
         logging.error(f"❌ Bölüm çıkarma hatası: {e}. Tüm metin kullanılacak."); return text.strip()
 
+# DÜZELTİLMİŞ FONKSİYON
 def smart_text_splitter(text, max_length=API_CHUNK_SIZE):
-    chunks = [];
+    chunks = []
     while len(text.encode('utf-8')) > max_length:
         split_pos = -1
-        for delimiter in ['.', '!', '?']: pos = text.rfind(delimiter, 0, max_length);
-            if pos > split_pos: split_pos = pos
-        if split_pos == -1: split_pos = text.rfind(' ', 0, max_length)
-        if split_pos == -1: split_pos = max_length
+        # Cümle sonu karakterlerini (. ! ?) önceliklendir
+        for delimiter in ['.', '!', '?']:
+            pos = text.rfind(delimiter, 0, max_length)
+            if pos > split_pos:
+                split_pos = pos
+        
+        # Cümle sonu bulunamazsa, en yakın boşluktan böl
+        if split_pos == -1:
+            split_pos = text.rfind(' ', 0, max_length)
+        
+        # Hiçbir bölme noktası bulunamazsa, zorla böl
+        if split_pos == -1:
+            split_pos = max_length
+        
+        # Bölme noktasını bir karakter ileri alarak noktalama işaretini dahil et
         split_pos += 1
-        chunks.append(text[:split_pos]); text = text[split_pos:].lstrip()
-    chunks.append(text); logging.info(f"✅ Metin {len(chunks)} parçaya güvenli şekilde bölündü"); return chunks
+        
+        chunks.append(text[:split_pos])
+        text = text[split_pos:].lstrip()
+    chunks.append(text)
+    logging.info(f"✅ Metin {len(chunks)} parçaya güvenli şekilde bölündü")
+    return chunks
 
 def save_audio(audio_content, output_dir, filename='ses.wav'):
     """Ses dosyasını WAV olarak kaydeder."""
@@ -195,7 +210,7 @@ def generate_synchronized_srt(audio_file_path, output_dir):
         logging.info(f"✅ SRT altyazı dosyası oluşturuldu: {srt_file_path}"); return srt_file_path
     except Exception as e: logging.error(f"❌ Altyazı oluşturma hatası: {e}"); return None
 
-# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
+# --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_audio_and_srt_process(story_text, output_dir, worker_project_id):
     """Ana ses ve senkronize altyazı üretme iş akışını yönetir."""
     logging.info("--- Ses ve Senkronize Altyazı Üretim Modülü Başlatıldı (Secret Manager & WAV) ---")
