@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (v2 - Vertex AI Uyumlu Versiyon)
+﻿# kucukresimolusturur.py (v3 - Girinti Hatası Düzeltilmiş)
 
 import json
 import logging
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-# --- YENİ: Vertex AI ve Gerekli Kütüphaneler ---
+# --- Vertex AI ve Gerekli Kütüphaneler ---
 try:
     import vertexai
     from vertexai.generative_models import GenerativeModel
@@ -21,12 +21,11 @@ except ImportError:
     sys.exit(1)
 
 # --- Global Değişkenler ---
-# Bu bilgiler, hikayeuretir.py ile aynı olmalıdır
 PROJECT_ID = "gen-lang-client-0738578499"
 LOCATION = "us-central1"
-model = None # Vertex AI modeli
+model = None
 
-# --- Ayarlar ve Stil (Değiştirilmedi) ---
+# --- Ayarlar ve Stil ---
 @dataclass(frozen=True)
 class ThumbnailStyle:
     width: int = 1280; height: int = 720; bg_primary: tuple = (15, 15, 25)
@@ -51,18 +50,14 @@ CHANNEL_NAME = "REVENGE WITH DAVID"
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s", stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
-# --- YENİ: Güvenli Vertex AI Fonksiyonları ---
+# --- Güvenli Vertex AI Fonksiyonları ---
 
 def configure_vertex_ai_for_thumbnail():
-    """Vertex AI'ı başlatır (eğer daha önce başlatılmadıysa)."""
     global model
-    if model:
-        return True
+    if model: return True
     try:
         logging.info("🔄 Thumbnail üretimi için Vertex AI kimlik bilgileri kontrol ediliyor...")
         credentials, _ = google.auth.default()
-        logging.info("✅ Varsayılan kimlik bilgileri (dahili servis hesabı) başarıyla bulundu.")
-        
         vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=credentials)
         generation_config = {"temperature": 0.7, "top_p": 0.8, "top_k": 40, "max_output_tokens": 2048}
         model = GenerativeModel(model_name="gemini-2.5-pro", generation_config=generation_config)
@@ -73,32 +68,20 @@ def configure_vertex_ai_for_thumbnail():
         return False
 
 def ask_vertex_ai(prompt: str) -> Mapping[str, str] | None:
-    """Vertex AI'a istek gönderir ve JSON yanıtını parse eder."""
     global model
-    if not model:
-        logging.error("❌ Model yapılandırılmamış. Thumbnail metni üretilemiyor.")
-        return None
+    if not model: return None
     try:
         response = model.generate_content(prompt)
-        if not response.text:
-            logger.error("Vertex AI'dan boş yanıt alındı")
-            return None
-        # Markdown JSON bloğunu temizle
+        if not response.text: return None
         txt = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE)
         result = json.loads(txt)
-        if not all(key in result for key in ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]):
-            logger.error("Vertex AI yanıtında eksik anahtarlar var.")
-            return None
+        if not all(key in result for key in ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]): return None
         return result
-    except json.JSONDecodeError as e:
-        logger.error(f"Vertex AI yanıtı JSON parse edilemedi: {e}")
-        logger.error(f"Ham yanıt: {response.text if 'response' in locals() else 'Yanıt alınamadı'}")
-        return None
     except Exception as exc:
         logger.error(f"Vertex AI çağrısı başarısız oldu: {exc}")
         return None
 
-# --- Yardımcı Fonksiyonlar (Değiştirilmedi) ---
+# --- Yardımcı Fonksiyonlar ---
 def count_words(text: str) -> int:
     if not text: return 0
     return len(re.sub(r'\*', '', text.strip()).split())
@@ -134,7 +117,7 @@ def create_fallback_content() -> dict:
         "EXTRA_DETAIL": "Now they're *BEGGING* for forgiveness but it's too late because everyone knows the truth about their *PATHETIC* behavior"
     }
 
-# --- ThumbnailCanvas Sınıfı (Değiştirilmedi) ---
+# --- ThumbnailCanvas Sınıfı ---
 class ThumbnailCanvas:
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
         self.style = style; self.image = Image.new("RGB", (style.width, style.height), style.bg_primary); self.draw = ImageDraw.Draw(self.image); self._create_gradient_background(); self.current_title_size = style.base_title_font_size; self.current_normal_size = style.base_normal_font_size; self.current_revenge_size = style.base_revenge_font_size; self.current_channel_size = style.base_channel_font_size; self.current_line_spacing = style.base_line_spacing; self.current_section_spacing = style.base_section_spacing; self._load_fonts()
@@ -191,17 +174,43 @@ class ThumbnailCanvas:
     def _draw_highlighted_text_line(self, line_parts, pos, font):
         x, y = pos
         for word, is_highlighted in line_parts: color = self.style.highlight_colour if is_highlighted else self.style.text_colour; self._draw_text_with_outline((x, y), word, font, color); x += self._text_width(word + " ", font)
+    
+    # DÜZELTİLMİŞ FONKSİYON
     def _draw_revenge_text_with_background_bottom(self, text: str, profile_width: int) -> None:
-        available_width = self.style.width - profile_width - (self.style.left_margin * 2); revenge_text = text.upper(); best_font_size = self.style.min_revenge_font_size
+        available_width = self.style.width - profile_width - (self.style.left_margin * 2)
+        revenge_text = text.upper()
+        best_font_size = self.style.min_revenge_font_size
+        
         for font_size in range(400, self.style.min_revenge_font_size - 1, -2):
-            try: test_font = ImageFont.truetype(str(self.style.font_path), font_size);
-                if self._text_width(revenge_text, test_font) <= available_width - 20: best_font_size = font_size; break
-            except (IOError, OSError): continue
-        try: revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
-        except: revenge_font = self.font_revenge
-        text_width = self._text_width(revenge_text, revenge_font); text_height = self._text_height(revenge_font); padding = 20; bg_height = text_height + (padding * 2); bg_y = self.style.height - bg_height - 45; bg_x = self.style.left_margin
-        bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0)); bg_draw = ImageDraw.Draw(bg_img); bg_draw.rounded_rectangle([0, 0, available_width, bg_height], radius=15, fill=(*self.style.revenge_bg_colour, 240)); self.image.paste(bg_img, (bg_x, bg_y), bg_img)
-        text_x = bg_x + (available_width - text_width) // 2; text_y = bg_y + padding; self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour)
+            try:
+                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
+                if self._text_width(revenge_text, test_font) <= available_width - 20:
+                    best_font_size = font_size
+                    break
+            except (IOError, OSError):
+                continue
+        
+        try:
+            revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
+        except:
+            revenge_font = self.font_revenge
+            
+        text_width = self._text_width(revenge_text, revenge_font)
+        text_height = self._text_height(revenge_font)
+        padding = 20
+        bg_height = text_height + (padding * 2)
+        bg_y = self.style.height - bg_height - 45
+        bg_x = self.style.left_margin
+        
+        bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0))
+        bg_draw = ImageDraw.Draw(bg_img)
+        bg_draw.rounded_rectangle([0, 0, available_width, bg_height], radius=15, fill=(*self.style.revenge_bg_colour, 240))
+        self.image.paste(bg_img, (bg_x, bg_y), bg_img)
+        
+        text_x = bg_x + (available_width - text_width) // 2
+        text_y = bg_y + padding
+        self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour)
+
     def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
         try: avatar = Image.open(img_path).convert("RGBA")
         except: logger.warning(f"Profil resmi yüklenemedi: {img_path}"); avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
@@ -228,7 +237,7 @@ class ThumbnailCanvas:
             for line_parts in self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal); y += self._text_height(self.font_normal) + self.current_line_spacing
         self._draw_revenge_text_with_background_bottom(revenge_line, profile_width)
 
-# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
+# --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir):
     """Anahtarsız, Vertex AI kullanarak thumbnail üretir."""
     logging.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (Güvenli Vertex AI Versiyonu) ---")
