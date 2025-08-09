@@ -175,7 +175,6 @@ class ThumbnailCanvas:
         x, y = pos
         for word, is_highlighted in line_parts: color = self.style.highlight_colour if is_highlighted else self.style.text_colour; self._draw_text_with_outline((x, y), word, font, color); x += self._text_width(word + " ", font)
     
-    # DÜZELTİLMİŞ FONKSİYON
     def _draw_revenge_text_with_background_bottom(self, text: str, profile_width: int) -> None:
         available_width = self.style.width - profile_width - (self.style.left_margin * 2)
         revenge_text = text.upper()
@@ -211,21 +210,55 @@ class ThumbnailCanvas:
         text_y = bg_y + padding
         self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour)
 
+    # DÜZELTİLMİŞ FONKSİYON
     def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
-        try: avatar = Image.open(img_path).convert("RGBA")
-        except: logger.warning(f"Profil resmi yüklenemedi: {img_path}"); avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
-        target_width, target_height = 200, 720; avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS); x = self.style.width - target_width; self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
-        channel_text = channel_name.upper(); best_channel_font_size = self.style.min_channel_font_size; padding = 15
+        try:
+            avatar = Image.open(img_path).convert("RGBA")
+        except:
+            logger.warning(f"Profil resmi yüklenemedi: {img_path}")
+            avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
+        
+        target_width, target_height = 200, 720
+        avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        x = self.style.width - target_width
+        self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
+        
+        channel_text = channel_name.upper()
+        best_channel_font_size = self.style.min_channel_font_size
+        padding = 15
+        
         for font_size in range(40, self.style.min_channel_font_size - 1, -2):
-            try: test_font = ImageFont.truetype(str(self.style.font_path), font_size);
-                if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2): best_channel_font_size = font_size; break
-            except (IOError, OSError): continue
-        try: channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
-        except: channel_font = self.font_channel
-        text_width = self._text_width(channel_text, channel_font); text_height = self._text_height(channel_font); box_height = text_height + (padding * 2); box_width = target_width - 20; box_y = target_height - box_height - 25; box_x = x + 10
-        box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0)); box_draw = ImageDraw.Draw(box_img); box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230)); box_draw.rounded_rectangle([1, 1, box_width-1, box_height-1], radius=12, outline=(*self.style.channel_border, 255), width=3); self.image.paste(box_img, (box_x, box_y), box_img)
-        text_x = box_x + (box_width - text_width) // 2; text_y = box_y + padding; self._draw_text_with_outline((text_x, text_y), channel_text, channel_font, self.style.channel_text)
+            try:
+                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
+                if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2):
+                    best_channel_font_size = font_size
+                    break
+            except (IOError, OSError):
+                continue
+        
+        try:
+            channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
+        except:
+            channel_font = self.font_channel
+            
+        text_width = self._text_width(channel_text, channel_font)
+        text_height = self._text_height(channel_font)
+        box_height = text_height + (padding * 2)
+        box_width = target_width - 20
+        box_y = target_height - box_height - 25
+        box_x = x + 10
+        
+        box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
+        box_draw = ImageDraw.Draw(box_img)
+        box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230))
+        box_draw.rounded_rectangle([1, 1, box_width - 1, box_height - 1], radius=12, outline=(*self.style.channel_border, 255), width=3)
+        self.image.paste(box_img, (box_x, box_y), box_img)
+        
+        text_x = box_x + (box_width - text_width) // 2
+        text_y = box_y + padding
+        self._draw_text_with_outline((text_x, text_y), channel_text, channel_font, self.style.channel_text)
         return target_width
+
     def compose(self, main_hook, setup, revenge_line, extra_detail, profile_pic_path):
         profile_width = self._draw_profile_section(profile_pic_path, CHANNEL_NAME); text_area_width = self.style.width - profile_width - self.style.left_margin - self.style.right_margin; self._adjust_for_perfect_fill(main_hook, setup, extra_detail, text_area_width)
         total_height = self._calculate_total_height_needed(main_hook, setup, extra_detail, text_area_width); available_height = self.style.height - self.style.bottom_margin - 120; y = max(self.style.top_margin, (available_height - total_height) // 2)
