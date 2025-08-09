@@ -1,4 +1,4 @@
-﻿# videoyapar.py
+﻿# videoyapar.py (v2 - Yazım Hatası Düzeltilmiş)
 
 import os
 import re
@@ -9,7 +9,7 @@ from moviepy.editor import (
 )
 from moviepy.audio.AudioClip import AudioArrayClip
 
-# --- AYARLAR (Orijinal boyutlar korundu) ---
+# --- AYARLAR ---
 TEST_MODU = False
 PROFIL_FOTO_KONUM_X = 0.5
 PROFIL_FOTO_KONUM_Y = 0.12
@@ -20,7 +20,7 @@ ALTYAZI_MAX_GENISLIK_ORANI = 0.9
 ISIM_FONT_SIZE = 40
 ALTYAZI_ASAGI_KAYDIR = -1.6
 
-# --- YARDIMCI FONKSİYONLAR (Sizin orijinal kodunuzdan, buluta uyarlandı) ---
+# --- Yardımcı Fonksiyonlar ---
 
 def kahraman_adini_al(protagonist_profile_text):
     """Verilen profil metninden kahramanın ilk adını okur."""
@@ -28,24 +28,15 @@ def kahraman_adini_al(protagonist_profile_text):
         for satir in protagonist_profile_text.splitlines():
             if satir.strip().lower().startswith("protagonist:"):
                 icerik = satir.split(":", 1)[1].strip()
-                # Örnek: "David Sterling, 32" -> "David"
                 isim = icerik.split(",")[0].strip().split(" ")[0]
                 print(f"✅ Kahraman adı profilden okundu: {isim}")
                 return isim.upper()
-        
-        # İsim bulunamazsa hata fırlat
-        raise Exception("❌ HATA: Profil metninde 'Protagonist:' satırı bulunamadı. Video oluşturulamaz.")
-        
+        raise Exception("❌ HATA: Profil metninde 'Protagonist:' satırı bulunamadı.")
     except Exception as e:
-        if "Protagonist:" in str(e):
-            # Protagonist bulunamadı hatası - direkt fırlat
-            raise e
-        else:
-            # Diğer hatalar için yeni hata mesajı
-            raise Exception(f"❌ HATA: Kahraman adı okunurken bir hata oluştu: {e}. Video oluşturulamaz.")
+        raise Exception(f"❌ HATA: Kahraman adı okunurken bir hata oluştu: {e}")
 
 def altyazi_parse(altyazi_dosyasi):
-    """SRT dosyasını parse eder ve altyazı listesi döndürür."""
+    """SRT dosyasını parse eder."""
     try:
         with open(altyazi_dosyasi, 'r', encoding='utf-8') as f:
             icerik = f.read().strip()
@@ -59,46 +50,41 @@ def altyazi_parse(altyazi_dosyasi):
             if not blok.strip(): continue
             satirlar = blok.strip().split('\n')
             if len(satirlar) < 2: continue
-            
             zaman_satiri_index = next((i for i, s in enumerate(satirlar) if '-->' in s), -1)
             if zaman_satiri_index == -1: continue
-
             zaman_match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})', satirlar[zaman_satiri_index])
             if not zaman_match: continue
-            
             baslangic = zaman_to_saniye(zaman_match.group(1))
             bitis = zaman_to_saniye(zaman_match.group(2))
             metin = '\n'.join(satirlar[zaman_satiri_index+1:]).strip()
-            altyazilar.append({'numara': len(altyazilar) + 1, 'baslangic': baslangic, 'bitis': bitis, 'metin': metin, 'sure': bitis - baslangic})
-        
+            altyazilar.append({'baslangic': baslangic, 'bitis': bitis, 'metin': metin, 'sure': bitis - baslangic})
         print(f"📝 {len(altyazilar)} altyazı başarıyla parse edildi")
         return altyazilar
     except Exception as e:
         print(f"❌ Altyazı parse hatası: {e}")
         return []
 
-def altyazi_stili(txt, video_genisligi):
+def altyazi_stili(txt, video_genislik):
     txt = txt.upper()
-    altyazi_max_genislik = int(video_genisligi * ALTYAZI_MAX_GENISLIK_ORANI)
-    # Dockerfile'da kurduğumuz fontu kullanıyoruz
+    altyazi_max_genislik = int(video_genislik * ALTYAZI_MAX_GENISLIK_ORANI)
     return TextClip(
         txt, fontsize=ALTYAZI_FONT_SIZE, color='white', font='Liberation-Sans-Bold',
         method='caption', align='center', size=(altyazi_max_genislik, None)
     )
 
-def altyazi_clipleri_olustur(altyazilar, video_genisligi, altyazi_y_konum, video_suresi):
+def altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi):
     """Her altyazı için ayrı TextClip oluşturur."""
     altyazi_clips = []
     for altyazi in altyazilar:
         if altyazi['baslangic'] >= video_suresi: continue
         try:
-            clip = altyazi_stili(altyazi['metin'], video_genisligi)
+            clip = altyazi_stili(altyazi['metin'], video_genislik)
             sure = min(altyazi['sure'], video_suresi - altyazi['baslangic'])
             clip = clip.set_start(altyazi['baslangic']).set_duration(sure)
             clip = clip.set_position(('center', altyazi_y_konum), relative=True)
             altyazi_clips.append(clip)
         except Exception as e:
-            print(f"⚠️  Altyazı #{altyazi.get('numara', '?')} oluşturulamadı: {e}")
+            print(f"⚠️  Altyazı oluşturulamadı: {e}")
             continue
     print(f"📝 Toplam {len(altyazi_clips)} altyazı clip'i oluşturuldu")
     return altyazi_clips
@@ -115,7 +101,6 @@ def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
 def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, protagonist_profile, output_dir):
     print("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
     
-    # İsim alınırken hata olursa burada durur
     kahraman_adi = kahraman_adini_al(protagonist_profile)
     altyazilar = altyazi_parse(srt_path)
     if not altyazilar: raise Exception("Altyazı dosyası okunamadı veya boş.")
@@ -129,7 +114,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_suresi = altyazilar[-1]['bitis'] if altyazilar else 0
         video_suresi = max(ses_clip.duration, altyazi_suresi)
         
-        if TEST_MODU:
+        if TEST_MODE:
             video_suresi = min(10, video_suresi)
             ses_clip = ses_clip.subclip(0, video_suresi)
 
@@ -141,7 +126,6 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         else:
             arkaplan = arkaplan_video.set_duration(video_suresi)
 
-        # 720p'ye yeniden boyutlandır
         arkaplan = arkaplan.resize(height=720)
 
         if ses_clip.duration < video_suresi:
@@ -176,7 +160,8 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
         altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
         
-        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genisligi, altyazi_y_konum, video_suresi)
+        # DÜZELTME: 'video_genisligi' -> 'video_genislik' olarak değiştirildi
+        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
 
         final_clip = CompositeVideoClip([
             arkaplan,
@@ -188,7 +173,6 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         
         output_video_path = os.path.join(output_dir, "final_video.mp4")
         
-        # --- DOSYA BOYUTUNU OPTİMİZE ETMEK İÇİN GÜNCELLENMİŞ KOD ---
         available_threads = os.cpu_count() or 4
         print(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
         
@@ -196,13 +180,12 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             output_video_path,
             codec="libx264",
             audio_codec="aac",
-            bitrate="4000k",  # 720p video için kaliteyi koruyan makul bir bitrate
+            bitrate="4000k",
             fps=24,
             threads=available_threads,
-            preset="slow", # Daha yavaş ama daha verimli sıkıştırma
+            preset="slow",
             logger='bar'
         )
-        # --- GÜNCELLEME SONU ---
         
         print(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
         return output_video_path
@@ -213,7 +196,6 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         traceback.print_exc()
         raise Exception("Video oluşturulamadı.")
     finally:
-        # Kaynakları temizle
         if ses_clip: ses_clip.close()
         if arkaplan_video: arkaplan_video.close()
         if final_clip: final_clip.close()
