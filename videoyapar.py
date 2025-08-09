@@ -1,4 +1,4 @@
-﻿# videoyapar.py (v2 - Yazım Hatası Düzeltilmiş)
+﻿# videoyapar.py (v3 - Nihai Düzeltilmiş Versiyon)
 
 import os
 import re
@@ -10,7 +10,7 @@ from moviepy.editor import (
 from moviepy.audio.AudioClip import AudioArrayClip
 
 # --- AYARLAR ---
-TEST_MODU = False
+TEST_MODE = False
 PROFIL_FOTO_KONUM_X = 0.5
 PROFIL_FOTO_KONUM_Y = 0.12
 PROFIL_FOTO_BOYUT = 350
@@ -160,7 +160,6 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
         altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
         
-        # DÜZELTME: 'video_genisligi' -> 'video_genislik' olarak değiştirildi
         altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
 
         final_clip = CompositeVideoClip([
