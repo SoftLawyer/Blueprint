@@ -10,7 +10,7 @@ from moviepy.editor import (
 from moviepy.audio.AudioClip import AudioArrayClip
 
 # --- AYARLAR (Orijinal boyutlar korundu) ---
-TEST_MODU = False 
+TEST_MODU = False
 PROFIL_FOTO_KONUM_X = 0.5
 PROFIL_FOTO_KONUM_Y = 0.12
 PROFIL_FOTO_BOYUT = 350
@@ -176,7 +176,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
         altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
         
-        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
+        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genisligi, altyazi_y_konum, video_suresi)
 
         final_clip = CompositeVideoClip([
             arkaplan,
@@ -188,18 +188,18 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         
         output_video_path = os.path.join(output_dir, "final_video.mp4")
         
-        # --- KALİTEYİ KORUYARAK HIZLANDIRMA İÇİN GÜNCELLENMİŞ KOD ---
-        # Cloud Run'da mevcut CPU sayısını al, varsayılan olarak 4 kullan.
+        # --- DOSYA BOYUTUNU OPTİMİZE ETMEK İÇİN GÜNCELLENMİŞ KOD ---
         available_threads = os.cpu_count() or 4
         print(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
         
         final_clip.write_videofile(
-            output_video_path, 
-            codec="libx264", 
-            audio_codec="aac", 
+            output_video_path,
+            codec="libx264",
+            audio_codec="aac",
+            bitrate="4000k",  # 720p video için kaliteyi koruyan makul bir bitrate
             fps=24,
-            threads=available_threads, # Kullanılabilir tüm çekirdekleri kullan
-            preset="medium", # 'medium' varsayılan ayardır ve kalite/hız arasında iyi bir denge sunar.
+            threads=available_threads,
+            preset="slow", # Daha yavaş ama daha verimli sıkıştırma
             logger='bar'
         )
         # --- GÜNCELLEME SONU ---

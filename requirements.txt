@@ -1,16 +1,17 @@
 Flask==2.3.3
 gunicorn==21.2.0
-google-cloud-storage==2.10.0
-google-cloud-secret-manager==2.16.4
-google-generativeai==0.3.1
-requests==2.31.0
-Pillow==10.0.1
-numpy==1.24.3
-rembg==2.0.50
-opencv-python-headless==4.8.1.78
-moviepy==1.0.3
-imageio-ffmpeg==0.4.9
+google-cloud-storage
+google-cloud-secret-manager
+google-cloud-aiplatform # YENİ: Vertex AI için
+google-auth # YENİ: Güvenli kimlik doğrulama için
+requests
+Pillow
+numpy
+rembg
+opencv-python-headless
+moviepy
+imageio-ffmpeg
 git+https://github.com/openai/whisper.git
-onnxruntime==1.16.1
+onnxruntime
 google-cloud-texttospeech
-matplotlib==3.7.2
+matplotlib
