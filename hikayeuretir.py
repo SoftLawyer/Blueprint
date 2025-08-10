@@ -19,7 +19,7 @@ except ImportError:
     exit()
 
 # --- Global Değişkenler ---
-PROJECT_ID = "gen-lang-client-0738578499"
+PROJECT_ID = "coastal-run-454908-t6"
 LOCATION = "us-central1"
 # YENİ: Secret Manager'da saklanacak anahtarın adı
 SERVICE_ACCOUNT_SECRET_NAME = "vertex-ai-sa-key" 

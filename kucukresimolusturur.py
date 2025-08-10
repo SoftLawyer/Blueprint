@@ -21,7 +21,7 @@ except ImportError:
     sys.exit(1)
 
 # --- Global Değişkenler ---
-PROJECT_ID = "gen-lang-client-0738578499"
+PROJECT_ID = "coastal-run-454908-t6"
 LOCATION = "us-central1"
 model = None
 
