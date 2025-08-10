@@ -1,5 +1,6 @@
 # hikayeuretir.py (v3 - Secret Manager'dan Güvenli Anahtar Okuyan Versiyon)
 
+
 import os
 import time
 import re

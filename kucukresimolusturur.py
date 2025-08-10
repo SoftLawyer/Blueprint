@@ -1,5 +1,6 @@
 ﻿# kucukresimolusturur.py (v3 - Girinti Hatası Düzeltilmiş)
 
+
 import json
 import logging
 import sys

@@ -1,5 +1,6 @@
 # googleilesesolustur.py (v5 - Girinti Hatası Düzeltilmiş)
 
+
 import os
 import re
 import logging
