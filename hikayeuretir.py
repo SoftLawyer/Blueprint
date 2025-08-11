@@ -27,7 +27,7 @@ SERVICE_ACCOUNT_SECRET_NAME = "vertex-ai-sa-key"
 
 model = None
 temp_key_path = None # İndirilen anahtarın geçici yolunu tutacak
-TEST_MODE = False
+TEST_MODE = True
 
 # --- YENİ ve GÜVENLİ: Vertex AI Yapılandırma ---
 
