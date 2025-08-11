@@ -84,9 +84,46 @@ def log_error_to_gcs(storage_client, bucket_name, title, error_details):
         # Bu fonksiyonun kendisi hata verirse, ana loglara yaz
         logging.error(f"!!! GCS'e HATA LOGU YAZILIRKEN KRİTİK HATA OLUŞTU: {e}")
 
-# --- Diğer Yardımcı Fonksiyonlar (Değiştirilmedi) ---
+# --- Diğer Yardımcı Fonksiyonlar (DÜZELTİLDİ) ---
 def shutdown_instance_group():
-    # ... (Bu fonksiyon aynı kalır) ...
+    """Mevcut sanal makinenin ait olduğu Yönetilen Örnek Grubunu (MIG) kapatır."""
+    logging.warning("10 dakikadır boşta. Kapatma prosedürü başlatılıyor...")
+    try:
+        # Önce zone bilgisini al (örn: projects/12345/zones/europe-west1-b)
+        zone_full = get_metadata("instance/zone")
+        if not zone_full:
+            logging.error("Zone bilgisi alınamadığı için kapatma işlemi iptal edildi.")
+            return
+        zone = zone_full.split('/')[-1]
+
+        # Sonra instance adını al
+        instance_name = get_metadata("instance/name")
+        if not instance_name:
+            logging.error("Instance adı alınamadığı için kapatma işlemi iptal edildi.")
+            return
+
+        # Instance adından grup adını bul
+        if "fabrika-isci" in instance_name:
+            group_name = "video-fabrikasi-grubu" # Rehberdeki isme göre sabitlendi
+            logging.info(f"Ait olunan grup: {group_name}, Zone: {zone}")
+
+            # Grubu kapatma (boyutunu 0'a indirme) komutunu çalıştır
+            command = [
+                "gcloud", "compute", "instance-groups", "managed",
+                "resize", group_name,
+                "--size=0",
+                f"--zone={zone}",
+                "--quiet" # Onay istemeden çalıştır
+            ]
+            subprocess.run(command, check=True)
+            logging.info(f"{group_name} başarıyla kapatıldı.")
+        else:
+            logging.warning("Bu makine bir yönetilen gruba ait görünmüyor. Kapatma işlemi atlandı.")
+
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Instance grubunu kapatırken hata oluştu: {e}")
+    except Exception as e:
+        logging.error(f"Kapatma prosedüründe beklenmedik bir hata: {e}")
 
 # --- ANA İŞ AKIŞI ---
 def main_loop():
@@ -113,20 +150,53 @@ def main_loop():
             story_title = story_title_from_module
 
             if not story_title:
-                # ... (Otomatik kapanma mantığı aynı) ...
+                if idle_start_time is None:
+                    idle_start_time = time.time()
+                if time.time() - idle_start_time > IDLE_SHUTDOWN_SECONDS:
+                    shutdown_instance_group()
+                    break
+                logging.info(f"İşlenecek yeni konu bulunamadı. Kapanmaya kalan süre: {int(IDLE_SHUTDOWN_SECONDS - (time.time() - idle_start_time))} saniye.")
+                time.sleep(60)
                 continue
             
             idle_start_time = None
             temp_dir = tempfile.mkdtemp(dir="/tmp")
             
-            # ... (Tüm video üretim adımları aynı) ...
+            formatted_story_path = os.path.join(temp_dir, "hikaye.txt")
+            with open(formatted_story_path, "w", encoding="utf-8") as f:
+                 f.write(formatted_text)
+
+            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, worker_project_id)
+            original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
+            cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
+            
+            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+            bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
+            bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
+            bg_video_blob.download_to_filename(bg_video_path)
+            
+            final_video_path = videoyapar.run_video_creation(bg_video_path, audio_file_path, srt_file_path, cleaned_photo_path, protagonist_profile, temp_dir)
+            
+            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir)
+            
+            cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
+            safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
+            files_to_upload = {
+                "nihai_video.mp4": final_video_path, "kucuk_resim.png": final_thumbnail_path,
+                "altyazi.srt": srt_file_path, "ses.wav": audio_file_path,
+                "hikaye.txt": formatted_story_path, "profil_foto_temiz.png": cleaned_photo_path,
+                "profil_foto_orijinal.png": original_photo_path
+            }
+            for filename, local_path in files_to_upload.items():
+                if os.path.exists(local_path):
+                    blob = cikti_bucket.blob(f"{safe_folder_name}/{filename}")
+                    blob.upload_from_filename(local_path)
             
             logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉🎉")
 
         except Exception as e:
             error_details = traceback.format_exc()
             logging.error(f"❌ HATA OLUŞTU: '{story_title}' başlıklı video üretilemedi. ❌")
-            # GÜNCELLENMİŞ HATA KAYDI ÇAĞRISI
             log_error_to_gcs(storage_client, CIKTI_BUCKET_ADI, story_title, error_details)
         finally:
             if temp_dir and os.path.exists(temp_dir):
