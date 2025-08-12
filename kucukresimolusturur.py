@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (Orijinal Kodun Secret Manager Uyumlu Versiyonu)
+﻿# kucukresimolusturur.py (Gemini API Key Uyumlu Versiyon)
 
 from __future__ import annotations
 import json
@@ -9,23 +9,21 @@ from pathlib import Path
 from typing import Mapping, Optional
 import re
 import os
-import tempfile
 
-# --- YENİ: Vertex AI ve Gerekli Kütüphaneler ---
+# --- YENİ: Gemini ve Google Cloud Kütüphaneleri ---
 try:
-    import vertexai
-    from vertexai.generative_models import GenerativeModel
-    from PIL import Image, ImageDraw, ImageFont
+    import google.generativeai as genai
     from google.cloud import secretmanager
-    from google.oauth2 import service_account
+    from google.api_core import exceptions as google_exceptions
+    from PIL import Image, ImageDraw, ImageFont
 except ImportError:
     print("⚠️ Gerekli kütüphaneler bulunamadı.")
-    print("   Lütfen 'pip install google-cloud-aiplatform Pillow google-cloud-secret-manager google-auth' komutunu çalıştırın.")
+    print("   Lütfen 'pip install google-generativeai google-cloud-secret-manager Pillow' komutunu çalıştırın.")
     sys.exit(1)
 
 # --- Global Değişkenler ---
-SERVICE_ACCOUNT_SECRET_NAME = "vertex-ai-sa-key"
-temp_key_path = None
+API_KEYS = []
+current_api_key_index = 0
 model = None
 
 # --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ (Değiştirilmedi) ---
@@ -54,100 +52,97 @@ CHANNEL_NAME = "REVENGE WITH DAVID"
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s", stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
-# --- GÜNCELLENMİŞ: Güvenli Vertex AI Fonksiyonları ---
+# --- GÜNCELLENMİŞ: Gemini API Key Fonksiyonları ---
 
-def load_sa_key_from_secret_manager(project_id):
-    """Servis hesabı anahtarını Secret Manager'dan indirip geçici bir dosyaya yazar."""
-    global temp_key_path
-    if temp_key_path and os.path.exists(temp_key_path):
-        return temp_key_path
+def load_api_keys_from_secret_manager(project_id):
+    """API anahtarlarını Secret Manager'dan yükler."""
+    global API_KEYS
+    if API_KEYS: return True
     try:
-        logger.info(f"🔄 Servis hesabı anahtarı '{SERVICE_ACCOUNT_SECRET_NAME}' Secret Manager'dan okunuyor...")
+        logger.info("🔄 Gemini API anahtarları Secret Manager'dan okunuyor...")
         client = secretmanager.SecretManagerServiceClient()
-        name = f"projects/{project_id}/secrets/{SERVICE_ACCOUNT_SECRET_NAME}/versions/latest"
+        name = f"projects/{project_id}/secrets/gemini-api-anahtarlari/versions/latest"
         response = client.access_secret_version(request={"name": name})
-        key_payload = response.payload.data
-
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as temp_file:
-            temp_file.write(key_payload.decode('utf-8'))
-            temp_key_path = temp_file.name
-        
-        logger.info(f"✅ Servis hesabı anahtarı başarıyla geçici dosyaya yazıldı: {temp_key_path}")
-        return temp_key_path
-    except Exception as e:
-        logger.error(f"❌ Secret Manager'dan servis hesabı anahtarı okunurken hata oluştu: {e}")
-        return None
-
-def configure_vertex_ai(worker_project_id):
-    """Vertex AI'ı Secret Manager'dan indirilen anahtarla başlatır."""
-    global model
-    if model: return True
-    
-    key_path = load_sa_key_from_secret_manager(worker_project_id)
-    if not key_path:
-        return False
-        
-    try:
-        credentials = service_account.Credentials.from_service_account_file(key_path)
-        vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=credentials)
-        model = GenerativeModel("gemini-2.5-pro")
-        logger.info(f"✅ Vertex AI, '{PROJECT_ID}' projesi için başarıyla yapılandırıldı.")
+        payload = response.payload.data.decode("UTF-8")
+        API_KEYS = [line.strip() for line in payload.splitlines() if line.strip()]
+        if not API_KEYS:
+            logger.error("❌ Secret Manager'da API anahtarı bulunamadı.")
+            return False
+        logger.info(f"🔑 {len(API_KEYS)} Gemini API anahtarı başarıyla yüklendi.")
         return True
     except Exception as e:
-        logger.error(f"❌ Vertex AI başlatılırken bir hata oluştu: {e}")
+        logger.error(f"❌ Secret Manager'dan anahtar okunurken hata oluştu: {e}")
         return False
 
-def ask_vertex_ai(prompt: str) -> Optional[Mapping[str, str]]:
-    """Vertex AI çağrısı - hata durumunda Exception fırlatır."""
-    global model
-    if not model:
-        raise Exception("Vertex AI modeli yapılandırılmamış.")
+def configure_gemini():
+    """Sıradaki API anahtarı ile Gemini'yi yapılandırır."""
+    global current_api_key_index, model
+    if not API_KEYS or current_api_key_index >= len(API_KEYS):
+        return None
     try:
-        generation_config = {"temperature": 0.7, "top_p": 0.8, "top_k": 40, "max_output_tokens": 2048}
-        response = model.generate_content(prompt, generation_config=generation_config)
-        
-        if not response.text:
-            raise Exception("Gemini'den boş yanıt alındı")
+        api_key = API_KEYS[current_api_key_index]
+        logger.info(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
+        return model
+    except Exception as e:
+        logger.error(f"❌ API anahtarı {current_api_key_index + 1} ile yapılandırma hatası: {e}")
+        current_api_key_index += 1
+        return configure_gemini()
+
+def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
+    """Gemini API çağrısı - hata durumunda Exception fırlatır."""
+    global current_api_key_index, model
+    if current_api_key_index >= len(API_KEYS):
+        current_api_key_index = 0
+        logger.warning("⚠️ Tüm API anahtarları denendi, baştan başlanıyor.")
+
+    while current_api_key_index < len(API_KEYS):
+        try:
+            if model is None:
+                model = configure_gemini()
+                if model is None:
+                    raise Exception("Yapılandırılacak geçerli API anahtarı kalmadı.")
             
-        txt = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE)
-        result = json.loads(txt)
-        
-        required_keys = ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]
-        if not all(key in result for key in required_keys):
-            raise Exception(f"Gemini yanıtında eksik anahtarlar: {set(required_keys) - set(result.keys())}")
+            generation_config = {"temperature": 0.7, "top_p": 0.8, "top_k": 40, "max_output_tokens": 2048}
+            response = model.generate_content(prompt, generation_config=generation_config)
             
-        for key, value in result.items():
-            if not value or not isinstance(value, str) or len(value.strip()) < 2:
-                raise Exception(f"Gemini yanıtında geçersiz değer: {key} = {value}")
-        
-        return result
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Gemini yanıtı JSON parse edilemedi: {e}")
-        logger.error(f"Ham yanıt: {response.text if 'response' in locals() else 'Yanıt alınamadı'}")
-        raise e # Hatanın yukarıya gitmesini sağla
-    except Exception as exc:
-        logger.error(f"Vertex AI çağrısı başarısız oldu: {exc}", exc_info=True)
-        raise exc # Hatanın yukarıya gitmesini sağla
+            if not response.text:
+                raise Exception("Gemini'den boş yanıt alındı")
+            
+            txt = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE)
+            result = json.loads(txt)
+            
+            required_keys = ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]
+            if not all(key in result for key in required_keys):
+                raise Exception(f"Gemini yanıtında eksik anahtarlar: {set(required_keys) - set(result.keys())}")
+            
+            return result
+            
+        except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied) as e:
+            logger.warning(f"⚠️ API anahtarı {current_api_key_index + 1} kotaya takıldı veya izin sorunu: {e}. Değiştiriliyor...")
+            current_api_key_index += 1
+            model = None
+        except Exception as exc:
+            logger.error(f"❌ API Anahtarı {current_api_key_index + 1} ile beklenmedik API hatası: {exc}")
+            current_api_key_index += 1
+            model = None
+    
+    raise Exception("Tüm API anahtarları denendi ve hepsi başarısız oldu.")
 
 # --- Yardımcı Fonksiyonlar (Orijinal Kodunuz) ---
-
+# ... (count_words, clean_story_text, build_prompt, ThumbnailCanvas sınıfı aynı kalacak) ...
 def count_words(text: str) -> int:
-    if not text or not isinstance(text, str):
-        return 0
+    if not text or not isinstance(text, str): return 0
     return len(re.sub(r'\*', '', text.strip()).split())
-
 def clean_story_text(story: str) -> str:
-    if not story or not isinstance(story, str):
-        return "Bir intikam hikayesi anlatılacak."
-    if len(story) > 8000:
-        story = story[:8000] + "..."
+    if not story or not isinstance(story, str): return "Bir intikam hikayesi anlatılacak."
+    if len(story) > 8000: story = story[:8000] + "..."
     story = re.sub(r'[^\w\s.,!?;:\-\'"()[\]{}]', ' ', story)
     story = re.sub(r'\s+', ' ', story).strip()
-    if len(story) < 50:
-        story = f"{story} Bu kişi büyük bir intikam planladı ve başarılı oldu."
+    if len(story) < 50: story = f"{story} Bu kişi büyük bir intikam planladı ve başarılı oldu."
     return story
-
 def build_prompt(story: str) -> str:
     clean_story = clean_story_text(story)
     return f"""
@@ -165,35 +160,19 @@ Story:
 {clean_story}
 ---
 """.strip()
-
-# --- ThumbnailCanvas Sınıfı (Orijinal Kodunuz) ---
 class ThumbnailCanvas:
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
         self.style = style; self.image = Image.new("RGB", (style.width, style.height), style.bg_primary); self.draw = ImageDraw.Draw(self.image); self._create_gradient_background(); self.current_title_size = style.base_title_font_size; self.current_normal_size = style.base_normal_font_size; self.current_revenge_size = style.base_revenge_font_size; self.current_channel_size = style.base_channel_font_size; self.current_line_spacing = style.base_line_spacing; self.current_section_spacing = style.base_section_spacing; self._load_fonts()
     def _create_gradient_background(self) -> None:
         for y in range(self.style.height): ratio = y / self.style.height; r = int(self.style.bg_primary[0] * (1 - ratio) + self.style.bg_secondary[0] * ratio); g = int(self.style.bg_primary[1] * (1 - ratio) + self.style.bg_secondary[1] * ratio); b = int(self.style.bg_primary[2] * (1 - ratio) + self.style.bg_secondary[2] * ratio); self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
     def _load_fonts(self) -> None:
-        font_options = [
-            self.style.font_path, Path("impact.ttf"), Path("arial.ttf"),
-            Path("Impact.ttf"), Path("Arial.ttf"),
-            Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
-            Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"),
-            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
-        ]
+        font_options = [self.style.font_path, Path("impact.ttf"), Path("arial.ttf"), Path("Impact.ttf"), Path("Arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"), Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")]
         font_loaded = False
         for font_path in font_options:
             if font_path.exists():
-                try:
-                    self.font_title = ImageFont.truetype(str(font_path), self.current_title_size)
-                    self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size)
-                    self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size)
-                    self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size)
-                    font_loaded = True; logger.info(f"✅ Font yüklendi: {font_path}"); break
-                except (IOError, OSError) as e:
-                    logger.warning(f"⚠️ Font yüklenemedi {font_path}: {e}")
-        if not font_loaded:
-            logger.warning("⚠️ Hiçbir TrueType font bulunamadı, varsayılan font kullanılıyor")
-            self.font_title = self.font_normal = self.font_revenge = self.font_channel = ImageFont.load_default()
+                try: self.font_title = ImageFont.truetype(str(font_path), self.current_title_size); self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size); self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size); self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size); font_loaded = True; logger.info(f"✅ Font yüklendi: {font_path}"); break
+                except (IOError, OSError) as e: logger.warning(f"⚠️ Font yüklenemedi {font_path}: {e}")
+        if not font_loaded: logger.warning("⚠️ Hiçbir TrueType font bulunamadı, varsayılan font kullanılıyor"); self.font_title = self.font_normal = self.font_revenge = self.font_channel = ImageFont.load_default()
     def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
         if not text: return 0
         try: return font.getlength(text)
@@ -202,46 +181,24 @@ class ThumbnailCanvas:
         try: bbox = font.getbbox("Ag"); return bbox[3] - bbox[1]
         except: return 20
     def _calculate_total_height_needed(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int) -> int:
-        total_height = self.style.top_margin
-        hook_lines = self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width)
-        total_height += len(hook_lines) * (self._text_height(self.font_title) + self.current_line_spacing)
-        total_height += self.current_section_spacing
-        setup_lines = self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width)
-        total_height += len(setup_lines) * (self._text_height(self.font_normal) + self.current_line_spacing)
-        total_height += self.current_section_spacing
-        if extra_detail:
-            extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width)
-            total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing)
-            total_height += self.current_section_spacing
-        total_height += self.style.bottom_margin
-        return total_height
+        total_height = self.style.top_margin; hook_lines = self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width); total_height += len(hook_lines) * (self._text_height(self.font_title) + self.current_line_spacing); total_height += self.current_section_spacing; setup_lines = self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width); total_height += len(setup_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
+        if extra_detail: extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width); total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
+        total_height += self.style.bottom_margin; return total_height
     def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
-        revenge_area_height = 120
-        target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height
-        max_attempts = 30
-        scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0
-        spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
+        revenge_area_height = 120; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
         self._scale_sizes(scale_factor); self._scale_spacing(spacing_factor); self._clamp_and_reload_fonts()
         for attempt in range(max_attempts):
-            current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width)
-            height_ratio = current_height / target_height
-            if 0.98 <= height_ratio <= 1.02:
-                logger.info("✓ Perfect screen fill achieved!")
-                break
+            current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); height_ratio = current_height / target_height
+            if 0.98 <= height_ratio <= 1.02: logger.info("✓ Perfect screen fill achieved!"); break
             if height_ratio < 0.98:
                 if self._can_increase_sizes(): self._scale_sizes(min(1.06, (1.0 / height_ratio)))
                 else: self._scale_spacing(1.08)
-            elif height_ratio > 1.02:
-                self._scale_sizes(max(0.94, (1.0 / height_ratio)))
+            elif height_ratio > 1.02: self._scale_sizes(max(0.94, (1.0 / height_ratio)))
             self._clamp_and_reload_fonts()
-    def _can_increase_sizes(self) -> bool:
-        return (self.current_title_size < self.style.max_title_font_size or self.current_normal_size < self.style.max_normal_font_size or self.current_revenge_size < self.style.max_revenge_font_size)
-    def _scale_sizes(self, factor: float) -> None:
-        self.current_title_size = int(self.current_title_size * factor); self.current_normal_size = int(self.current_normal_size * factor); self.current_revenge_size = int(self.current_revenge_size * factor)
-    def _scale_spacing(self, factor: float) -> None:
-        self.current_line_spacing = int(self.current_line_spacing * factor); self.current_section_spacing = int(self.current_section_spacing * factor)
-    def _clamp_and_reload_fonts(self):
-        self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size)); self.current_normal_size = max(self.style.min_normal_font_size, min(self.style.max_normal_font_size, self.current_normal_size)); self.current_revenge_size = max(self.style.min_revenge_font_size, min(self.style.max_revenge_font_size, self.current_revenge_size)); self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing)); self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing)); self._load_fonts()
+    def _can_increase_sizes(self) -> bool: return (self.current_title_size < self.style.max_title_font_size or self.current_normal_size < self.style.max_normal_font_size or self.current_revenge_size < self.style.max_revenge_font_size)
+    def _scale_sizes(self, factor: float) -> None: self.current_title_size = int(self.current_title_size * factor); self.current_normal_size = int(self.current_normal_size * factor); self.current_revenge_size = int(self.current_revenge_size * factor)
+    def _scale_spacing(self, factor: float) -> None: self.current_line_spacing = int(self.current_line_spacing * factor); self.current_section_spacing = int(self.current_section_spacing * factor)
+    def _clamp_and_reload_fonts(self): self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size)); self.current_normal_size = max(self.style.min_normal_font_size, min(self.style.max_normal_font_size, self.current_normal_size)); self.current_revenge_size = max(self.style.min_revenge_font_size, min(self.style.max_revenge_font_size, self.current_revenge_size)); self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing)); self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing)); self._load_fonts()
     def _draw_text_with_outline(self, pos, text, font, fill_color, outline_color=None, outline_width=None):
         x, y = pos; outline_color = outline_color or self.style.text_stroke_color
         if font is None: self.draw.text((x, y), text, fill=fill_color); return
@@ -261,8 +218,7 @@ class ThumbnailCanvas:
         for part_text, is_highlighted in parts:
             for word in part_text.split():
                 word_width = self._text_width(word + " ", font)
-                if current_line_width + word_width > max_width and current_line_parts:
-                    lines.append(current_line_parts); current_line_parts, current_line_width = [], 0
+                if current_line_width + word_width > max_width and current_line_parts: lines.append(current_line_parts); current_line_parts, current_line_width = [], 0
                 current_line_parts.append((word, is_highlighted)); current_line_width += word_width
         if current_line_parts: lines.append(current_line_parts)
         return lines
@@ -354,9 +310,8 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
                 logger.warning(f"⚠️ Kelime sayısı hedef dışında: {total_words} (hedef: 80-100)")
         except Exception as e:
             logger.error(f"❌ Gemini çağrısı sırasında hata (deneme {attempt + 1}): {e}")
-            # Hata durumunda döngüye devam et, son denemede hata fırlatılacak
             if attempt == max_retries - 1:
-                raise e # Son denemede hatayı yukarıya fırlat
+                raise e
             continue
     
     if parts is None:
