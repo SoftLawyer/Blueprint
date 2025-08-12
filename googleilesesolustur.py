@@ -1,4 +1,4 @@
-# googleilesesolustur.py (v13 - Secret Manager Entegrasyonu)
+# googleilesesolustur.py (v14 - Hata Toleransı ve Tekrar Deneme)
 
 import os
 import requests
@@ -11,7 +11,6 @@ import re
 import struct # Fade-out efekti için eklendi
 import logging
 
-# YENİ: Secret Manager ve Google Cloud hata sınıflarını import ediyoruz
 from google.cloud import secretmanager
 from google.api_core import exceptions
 
@@ -27,18 +26,18 @@ SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 3500
 MAX_SENTENCE_BYTES = 700
 MAX_RECURSION_DEPTH = 3
+# YENİ: Tekrar deneme ayarları
+MAX_RETRIES = 4
+INITIAL_BACKOFF_SECONDS = 2
 
-# YENİ: SECRET MANAGER AYARLARI
-# Lütfen bu değeri kendi Google Cloud Proje ID'niz ile güncelleyin.
+# SECRET MANAGER AYARLARI
 PROJECT_ID = "sizin-google-cloud-proje-id-niz" 
 SECRET_ID = "gemini-api-anahtarlari"
 
 
-# --- YENİ FONKSİYON: SECRET MANAGER'DAN ANAHTARLARI ALMA ---
 def get_api_keys_from_secret_manager():
     """
     Google Cloud Secret Manager'dan API anahtarlarını güvenli bir şekilde alır.
-    Secret'ın içeriğinin bir JSON dizisi ["key1", "key2"] formatında olduğunu varsayar.
     """
     logging.info(f"🤫 Secret Manager'dan '{SECRET_ID}' secret'ı alınıyor...")
     try:
@@ -54,20 +53,9 @@ def get_api_keys_from_secret_manager():
 
         logging.info(f"✅ Başarıyla {len(api_keys)} adet API anahtarı Secret Manager'dan alındı.")
         return api_keys
-
-    except exceptions.NotFound:
-        logging.critical(f"❌ HATA: Secret '{SECRET_ID}' veya proje '{PROJECT_ID}' bulunamadı!")
-        raise
-    except exceptions.PermissionDenied:
-        logging.critical(f"❌ HATA: Bu servisin '{SECRET_ID}' secret'ına erişim izni yok! (IAM rolü: Secret Manager Secret Accessor)")
-        raise
-    except json.JSONDecodeError:
-        logging.critical("❌ HATA: Secret içeriği geçerli bir JSON formatında değil! Beklenen format: [\"anahtar1\", \"anahtar2\"]")
-        raise
     except Exception as e:
-        logging.critical(f"❌ Secret Manager'dan anahtar alınırken beklenmedik bir hata oluştu: {e}")
+        logging.critical(f"❌ Secret Manager'dan anahtar alınırken kritik hata: {e}")
         raise
-
 
 def apply_fade_out(audio_data, fade_duration_ms=500):
     """
@@ -216,53 +204,77 @@ def test_api_key(api_key, key_number):
         logging.error(f"❌ API anahtarı #{key_number} test edilirken ağ hatası: {e}")
         return False
 
+# --- GÜNCELLENMİŞ FONKSİYON ---
 def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
-    """Tek bir metin parçasını seslendirir."""
+    """
+    Tek bir metin parçasını seslendirir.
+    Geçici sunucu hatalarında (5xx) bekleyerek tekrar dener (exponential backoff).
+    """
     if recursion_depth > MAX_RECURSION_DEPTH:
         logging.error(f"❌ Parça {chunk_id}: Maksimum bölme derinliği aşıldı! Atlanıyor...")
         return None
     
-    try:
-        logging.info(f"➡️ Parça {chunk_id} işleniyor ({len(chunk.encode('utf-8'))} byte)...")
-        url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
-        data = {
-            "input": {"text": chunk},
-            "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
-            "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.99, "sampleRateHertz": SAMPLE_RATE}
-        }
-        response = requests.post(url, json=data, timeout=60)
-        
-        if response.status_code == 200:
-            result = response.json()
-            if 'audioContent' in result:
-                audio_data = base64.b64decode(result['audioContent'])
-                logging.info(f"✅ Parça {chunk_id} başarıyla seslendirildi.")
-                return audio_data
+    url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
+    data = {
+        "input": {"text": chunk},
+        "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
+        "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.99, "sampleRateHertz": SAMPLE_RATE}
+    }
+    
+    backoff_time = INITIAL_BACKOFF_SECONDS
+    for attempt in range(MAX_RETRIES):
+        try:
+            logging.info(f"➡️ Parça {chunk_id} işleniyor ({len(chunk.encode('utf-8'))} byte), deneme #{attempt + 1}...")
+            response = requests.post(url, json=data, timeout=60)
+            
+            # --- BAŞARILI DURUM ---
+            if response.status_code == 200:
+                result = response.json()
+                if 'audioContent' in result:
+                    audio_data = base64.b64decode(result['audioContent'])
+                    logging.info(f"✅ Parça {chunk_id} başarıyla seslendirildi.")
+                    return audio_data
+                else:
+                    logging.error(f"❌ Parça {chunk_id}: API yanıtında 'audioContent' bulunamadı.")
+                    return None # Başarılı ama içerik yok, tekrar deneme.
+
+            # --- GEÇİCİ SUNUCU HATASI (5xx) ---
+            elif response.status_code >= 500:
+                logging.warning(f"⚠️ Parça {chunk_id} için geçici sunucu hatası alındı (Kod: {response.status_code}). {backoff_time} saniye sonra tekrar denenecek.")
+                time.sleep(backoff_time)
+                backoff_time *= 2 # Bir sonraki bekleme süresini ikiye katla
+                continue # Döngünün bir sonraki adımına geç
+
+            # --- KALICI İSTEMCİ HATASI (4xx) veya DİĞER HATALAR ---
             else:
-                logging.error(f"❌ Parça {chunk_id}: API yanıtında 'audioContent' bulunamadı.")
-                return None
-        else:
-            error_msg = f"HTTP {response.status_code}"
-            try:
-                error_msg = response.json().get('error', {}).get('message', error_msg)
-            except json.JSONDecodeError:
-                error_msg = response.text
-            logging.error(f"❌ Parça {chunk_id} API hatası: {error_msg}")
-            if "too long" in error_msg.lower() or "exceeds the limit" in error_msg.lower():
-                logging.warning(f"🔪 Parça {chunk_id} çok uzun geldi, daha küçük parçalara bölünüyor...")
-                smaller_chunks = smart_text_splitter(chunk, max_length=API_CHUNK_SIZE // 2)
-                combined_audio = b''
-                for i, small_chunk in enumerate(smaller_chunks):
-                    small_audio = process_single_chunk(small_chunk, api_key, f"{chunk_id}.{i+1}", recursion_depth + 1)
-                    if small_audio:
-                        combined_audio += small_audio
-                    else:
-                        return None
-                return combined_audio
-            return None
-    except Exception as e:
-        logging.error(f"❌ Parça {chunk_id} işlenirken beklenmedik hata: {e}")
-        return None
+                error_msg = f"HTTP {response.status_code}"
+                try:
+                    error_msg = response.json().get('error', {}).get('message', error_msg)
+                except json.JSONDecodeError:
+                    error_msg = response.text
+                logging.error(f"❌ Parça {chunk_id} için kalıcı API hatası: {error_msg}")
+                
+                # Metin çok uzunsa ve daha bölünebiliyorsa, tekrar bölmeyi dene
+                if "too long" in error_msg.lower() or "exceeds the limit" in error_msg.lower():
+                    logging.warning(f"🔪 Parça {chunk_id} çok uzun geldi, daha küçük parçalara bölünüyor...")
+                    smaller_chunks = smart_text_splitter(chunk, max_length=API_CHUNK_SIZE // 2)
+                    combined_audio = b''
+                    for i, small_chunk in enumerate(smaller_chunks):
+                        small_audio = process_single_chunk(small_chunk, api_key, f"{chunk_id}.{i+1}", recursion_depth + 1)
+                        if small_audio: combined_audio += small_audio
+                        else: return None
+                    return combined_audio
+                
+                return None # Kalıcı hata, tekrar deneme.
+
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"⚠️ Parça {chunk_id} işlenirken ağ hatası: {e}. {backoff_time} saniye sonra tekrar denenecek.")
+            time.sleep(backoff_time)
+            backoff_time *= 2
+    
+    logging.critical(f"❌ Parça {chunk_id}, {MAX_RETRIES} denemeden sonra hala işlenemedi.")
+    return None
+
 
 def text_to_speech_process(text, api_keys):
     """Metni seslendirmek için tüm süreci yönetir, geçerli API anahtarlarını dener."""
@@ -347,7 +359,6 @@ def generate_synchronized_srt(audio_file_path, output_dir):
         logging.critical(f"❌ Whisper ile altyazı oluşturma hatası: {e}")
         return None
 
-# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
 def run_audio_and_srt_process(story_text, output_dir, api_keys_list=None):
     """
     Ana ses ve altyazı üretme iş akışını yönetir.
@@ -366,7 +377,6 @@ def run_audio_and_srt_process(story_text, output_dir, api_keys_list=None):
                 raise ValueError("Lütfen koddaki PROJECT_ID değişkenini kendi Google Cloud Proje ID'niz ile güncelleyin.")
             keys_to_use = get_api_keys_from_secret_manager()
         except Exception as e:
-            # Hata zaten get_api_keys_from_secret_manager içinde loglandı, burada süreci durdur.
             raise Exception(f"Secret Manager'dan API anahtarları alınamadı: {e}")
 
     if not keys_to_use:
