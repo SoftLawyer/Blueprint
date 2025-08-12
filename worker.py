@@ -1,4 +1,4 @@
-# worker.py (v8 - Hikaye Sonrası Thumbnail Öncelikli)
+# worker.py (v10 - Merkezi Hata Kaydı)
 
 import os
 import logging
@@ -30,6 +30,8 @@ logging.basicConfig(
 
 KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
 CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
+# YENİ: Hatalar için ayrı bir bucket adı
+HATA_BUCKET_ADI = "video-fabrikam-hatalar"
 IDLE_SHUTDOWN_SECONDS = 600 # 10 dakika
 
 # --- Yardımcı Fonksiyonlar ---
@@ -62,30 +64,65 @@ def shutdown_instance_group():
     except Exception as e:
         logging.error(f"Instance grubunu kapatırken hata oluştu: {e}")
 
-def log_error_to_gcs(storage_client, bucket_name, title, error_details):
+# GÜNCELLENMİŞ: Merkezi ve tek dosyaya yazan hata kaydı fonksiyonu
+def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_prepend, max_retries=5):
+    """
+    Bir GCS dosyasının başına, çakışmaları önleyerek, güvenli bir şekilde yeni içerik ekler.
+    """
     try:
         bucket = storage_client.bucket(bucket_name)
-        instance_name = get_metadata("instance/name") or "unknown-instance"
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        blob = bucket.blob(filename)
         
-        error_log_filename = f"hatalarblogu/{timestamp}-{instance_name}.log"
-        error_blob = bucket.blob(error_log_filename)
-        log_content = (
-            f"Zaman Damgası: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Makine: {instance_name}\n"
-            f"Başlık: {title or 'N/A'}\n\n"
-            f"--- HATA DETAYI ---\n{error_details}"
-        )
-        error_blob.upload_from_string(log_content, content_type="text/plain; charset=utf-8")
-        logging.info(f"Tam hata detayı GCS'e kaydedildi: gs://{bucket_name}/{error_log_filename}")
+        for attempt in range(max_retries):
+            try:
+                # 1. Dosyanın mevcut halini ve "generation" numarasını oku
+                current_content = blob.download_as_text()
+                current_generation = blob.generation
+            except exceptions.NotFound:
+                # Dosya yoksa, boş olarak kabul et
+                current_content = ""
+                current_generation = 0
+            except exceptions.PreconditionFailed:
+                logging.warning(f"'{filename}' için GCS çakışması. Tekrar deneniyor... ({attempt + 1})")
+                time.sleep(1)
+                continue
 
-        if title:
-            failed_title_filename = f"tamamlanamayanbasliklar/{timestamp}-{instance_name}.txt"
-            title_blob = bucket.blob(failed_title_filename)
-            title_blob.upload_from_string(title, content_type="text/plain; charset=utf-8")
-            logging.info(f"Tamamlanamayan başlık GCS'e kaydedildi: gs://{bucket_name}/{failed_title_filename}")
+            # 2. Yeni içeriği eskisinin başına ekle
+            updated_content = content_to_prepend + current_content
+            
+            # 3. Dosyayı, sadece bizim okuduğumuz versiyon ise güncellemeye izin ver
+            try:
+                blob.upload_from_string(updated_content, content_type="text/plain; charset=utf-8", if_generation_match=current_generation)
+                logging.info(f"Log GCS'teki merkezi dosyaya eklendi: gs://{bucket_name}/{filename}")
+                return # Başarılı, döngüden çık
+            except exceptions.PreconditionFailed:
+                logging.warning(f"'{filename}' için GCS yazma çakışması. Tekrar deneniyor... ({attempt + 1})")
+                time.sleep(1)
+        
+        logging.error(f"'{filename}' dosyasına {max_retries} denemeden sonra yazılamadı.")
+
     except Exception as e:
         logging.error(f"!!! GCS'e HATA LOGU YAZILIRKEN KRİTİK HATA OLUŞTU: {e}")
+
+def log_error_to_gcs(storage_client, bucket_name, title, error_details):
+    """Hata loglarını ilgili merkezi dosyalara yönlendirir."""
+    instance_name = get_metadata("instance/name") or "unknown-instance"
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Detaylı hata logunu oluştur
+    log_content = (
+        f"Zaman Damgası: {timestamp}\n"
+        f"Makine: {instance_name}\n"
+        f"Başlık: {title or 'N/A'}\n"
+        f"--- HATA DETAYI ---\n{error_details}\n"
+        f"{'='*80}\n\n"
+    )
+    _safe_prepend_to_gcs_file(storage_client, bucket_name, "hatalarblogu.txt", log_content)
+
+    # Sadece tamamlanamayan başlığı kaydet
+    if title:
+        title_content = f"{timestamp} - {title}\n"
+        _safe_prepend_to_gcs_file(storage_client, bucket_name, "tamamlanamayanbasliklar.txt", title_content)
 
 # --- ANA İŞ AKIŞI ---
 def main_loop():
@@ -93,11 +130,6 @@ def main_loop():
     idle_start_time = None
     logging.info("🚀 Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
     
-    worker_project_id = os.environ.get("GCP_PROJECT") or get_metadata("project/project-id")
-    if not worker_project_id:
-        logging.critical("❌ Makinenin Proje ID'si alınamadı! Worker durduruluyor.")
-        return
-
     while True:
         story_title = None
         temp_dir = None
@@ -106,8 +138,9 @@ def main_loop():
                 story_content,
                 story_title_from_module,
                 protagonist_profile,
+                api_keys,
                 formatted_text
-            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI, worker_project_id)
+            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
             
             story_title = story_title_from_module
 
@@ -128,28 +161,18 @@ def main_loop():
             with open(formatted_story_path, "w", encoding="utf-8") as f:
                  f.write(formatted_text)
 
-            # --- YENİ OPTİMİZE EDİLMİŞ SIRA ---
-            
-            # 1. Profil fotoğrafını üret (küçük resim için gerekli)
+            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, api_keys)
             original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
-            
-            # 2. Küçük resmi oluşturmayı dene (Hata verirse erken durur)
-            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, worker_project_id)
-            
-            # 3. Ses ve altyazıyı oluştur
-            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, worker_project_id)
-            
-            # 4. Profil fotoğrafının arka planını temizle
             cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
             
-            # 5. Son olarak videoyu birleştir
+            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, api_keys)
+            
             kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
             bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
             bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
             bg_video_blob.download_to_filename(bg_video_path)
             final_video_path = videoyapar.run_video_creation(bg_video_path, audio_file_path, srt_file_path, cleaned_photo_path, protagonist_profile, temp_dir)
             
-            # --- YÜKLEME ---
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
             safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
             files_to_upload = {
@@ -168,7 +191,8 @@ def main_loop():
         except Exception as e:
             error_details = traceback.format_exc()
             logging.error(f"❌ HATA OLUŞTU: '{story_title}' başlıklı video üretilemedi. ❌")
-            log_error_to_gcs(storage_client, CIKTI_BUCKET_ADI, story_title, error_details)
+            # GÜNCELLENDİ: Hataları yeni bucket'a kaydet
+            log_error_to_gcs(storage_client, HATA_BUCKET_ADI, story_title, error_details)
         finally:
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
