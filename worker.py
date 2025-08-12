@@ -1,4 +1,4 @@
-# worker.py (v7 - Küçük Resim Öncelikli)
+# worker.py (v8 - Hikaye Sonrası Thumbnail Öncelikli)
 
 import os
 import logging
@@ -128,21 +128,28 @@ def main_loop():
             with open(formatted_story_path, "w", encoding="utf-8") as f:
                  f.write(formatted_text)
 
-            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, worker_project_id)
-            original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
-            cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
+            # --- YENİ OPTİMİZE EDİLMİŞ SIRA ---
             
-            # --- YENİ SIRA ---
-            # Önce küçük resmi oluşturmayı dene
+            # 1. Profil fotoğrafını üret (küçük resim için gerekli)
+            original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
+            
+            # 2. Küçük resmi oluşturmayı dene (Hata verirse erken durur)
             final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, worker_project_id)
             
-            # Sonra videoyu birleştir
+            # 3. Ses ve altyazıyı oluştur
+            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, worker_project_id)
+            
+            # 4. Profil fotoğrafının arka planını temizle
+            cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
+            
+            # 5. Son olarak videoyu birleştir
             kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
             bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
             bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
             bg_video_blob.download_to_filename(bg_video_path)
             final_video_path = videoyapar.run_video_creation(bg_video_path, audio_file_path, srt_file_path, cleaned_photo_path, protagonist_profile, temp_dir)
             
+            # --- YÜKLEME ---
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
             safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
             files_to_upload = {
