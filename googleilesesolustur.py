@@ -1,364 +1,394 @@
-# googleilesesolustur.py (Orijinal Kodun Secret Manager Uyumlu Versiyonu)
+# googleilesesolustur.py (v13 - Secret Manager Entegrasyonu)
 
 import os
-import re
-import logging
-import tempfile
-import wave
-import struct
+import requests
 import json
+import time
+import wave
 import base64
+import whisper
+import re
+import struct # Fade-out efekti için eklendi
+import logging
 
-# --- Gerekli Google Cloud ve AI Kütüphaneleri ---
-try:
-    from google.cloud import texttospeech, secretmanager
-    from google.oauth2 import service_account
-    import whisper
-except ImportError:
-    print("⚠️ Gerekli Google Cloud kütüphaneleri bulunamadı.")
-    print("   Lütfen 'pip install google-cloud-texttospeech google-cloud-secret-manager google-auth git+https://github.com/openai/whisper.git' komutunu çalıştırın.")
-    exit()
+# YENİ: Secret Manager ve Google Cloud hata sınıflarını import ediyoruz
+from google.cloud import secretmanager
+from google.api_core import exceptions
 
-# --- Global Değişkenler ---
-SERVICE_ACCOUNT_SECRET_NAME = "vertex-ai-sa-key"
-temp_key_path = None
+# --- TEMEL AYARLAR ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
-# Sabitler (Orijinal kodunuzdan alındı)
+# --- SABİTLER ---
 SAMPLE_RATE = 24000
 API_CHUNK_SIZE = 3500
 MAX_SENTENCE_BYTES = 700
 MAX_RECURSION_DEPTH = 3
 
-# --- Güvenli Kimlik Doğrulama Fonksiyonu ---
+# YENİ: SECRET MANAGER AYARLARI
+# Lütfen bu değeri kendi Google Cloud Proje ID'niz ile güncelleyin.
+PROJECT_ID = "sizin-google-cloud-proje-id-niz" 
+SECRET_ID = "gemini-api-anahtarlari"
 
-def load_sa_key_from_secret_manager(project_id):
-    """Servis hesabı anahtarını Secret Manager'dan indirip geçici bir dosyaya yazar."""
-    global temp_key_path
-    if temp_key_path and os.path.exists(temp_key_path):
-        return temp_key_path
+
+# --- YENİ FONKSİYON: SECRET MANAGER'DAN ANAHTARLARI ALMA ---
+def get_api_keys_from_secret_manager():
+    """
+    Google Cloud Secret Manager'dan API anahtarlarını güvenli bir şekilde alır.
+    Secret'ın içeriğinin bir JSON dizisi ["key1", "key2"] formatında olduğunu varsayar.
+    """
+    logging.info(f"🤫 Secret Manager'dan '{SECRET_ID}' secret'ı alınıyor...")
     try:
-        logging.info(f"🔄 Servis hesabı anahtarı '{SERVICE_ACCOUNT_SECRET_NAME}' Secret Manager'dan okunuyor...")
         client = secretmanager.SecretManagerServiceClient()
-        name = f"projects/{project_id}/secrets/{SERVICE_ACCOUNT_SECRET_NAME}/versions/latest"
+        name = f"projects/{PROJECT_ID}/secrets/{SECRET_ID}/versions/latest"
         response = client.access_secret_version(request={"name": name})
-        key_payload = response.payload.data
+        payload = response.payload.data.decode("UTF-8")
+        api_keys = json.loads(payload)
 
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as temp_file:
-            temp_file.write(key_payload.decode('utf-8'))
-            temp_key_path = temp_file.name
-        
-        logging.info(f"✅ Servis hesabı anahtarı başarıyla geçici dosyaya yazıldı: {temp_key_path}")
-        return temp_key_path
+        if not isinstance(api_keys, list) or not api_keys:
+            logging.error("Secret içeriği geçerli bir liste değil veya boş.")
+            raise ValueError("Secret'tan alınan veri formatı hatalı.")
+
+        logging.info(f"✅ Başarıyla {len(api_keys)} adet API anahtarı Secret Manager'dan alındı.")
+        return api_keys
+
+    except exceptions.NotFound:
+        logging.critical(f"❌ HATA: Secret '{SECRET_ID}' veya proje '{PROJECT_ID}' bulunamadı!")
+        raise
+    except exceptions.PermissionDenied:
+        logging.critical(f"❌ HATA: Bu servisin '{SECRET_ID}' secret'ına erişim izni yok! (IAM rolü: Secret Manager Secret Accessor)")
+        raise
+    except json.JSONDecodeError:
+        logging.critical("❌ HATA: Secret içeriği geçerli bir JSON formatında değil! Beklenen format: [\"anahtar1\", \"anahtar2\"]")
+        raise
     except Exception as e:
-        logging.error(f"❌ Secret Manager'dan servis hesabı anahtarı okunurken hata oluştu: {e}")
-        return None
+        logging.critical(f"❌ Secret Manager'dan anahtar alınırken beklenmedik bir hata oluştu: {e}")
+        raise
 
-# --- Orijinal Kodunuzdaki Tüm Fonksiyonlar (Değiştirilmedi) ---
 
 def apply_fade_out(audio_data, fade_duration_ms=500):
+    """
+    Ses verisinin sonuna yumuşak bir bitiş (linear fade-out) uygular.
+    """
     try:
         logging.info(f"🌬️ Sona doğal bir bitiş için {fade_duration_ms}ms'lik 'fade-out' efekti uygulanıyor...")
         sample_width = 2
         fade_samples = int(SAMPLE_RATE * (fade_duration_ms / 1000.0))
         total_samples = len(audio_data) // sample_width
         fade_samples = min(fade_samples, total_samples)
-        if fade_samples == 0: return audio_data
+
+        if fade_samples == 0:
+            logging.warning("Fade-out uygulanamayacak kadar kısa ses, atlanıyor.")
+            return audio_data
+
         main_part = audio_data[:-fade_samples * sample_width]
         fade_part = audio_data[-fade_samples * sample_width:]
         faded_audio = bytearray()
+        
         for i in range(fade_samples):
             multiplier = 1.0 - (i / fade_samples)
             sample_bytes = fade_part[i * sample_width : (i + 1) * sample_width]
             original_sample = struct.unpack('<h', sample_bytes)[0]
             faded_sample = int(original_sample * multiplier)
             faded_audio.extend(struct.pack('<h', faded_sample))
+            
         return main_part + faded_audio
     except Exception as e:
-        logging.warning(f"⚠️ Fade-out uygulanamadı: {e}. Ses orjinal haliyle bırakılıyor.")
+        logging.error(f"⚠️ Fade-out uygulanamadı: {e}. Ses orjinal haliyle bırakılıyor.")
         return audio_data
 
 def extract_target_sections(text):
+    """Metinden sadece seslendirilecek olan 'STORY:' ve 'VIEWER ENGAGEMENT:' bölümlerini çıkarır."""
     try:
         logging.info("🔍 STORY: ve VIEWER ENGAGEMENT: bölümleri aranıyor...")
-        logging.info(f"📋 Metin başlangıcı (ilk 200 karakter):\n{repr(text[:200])}")
-        story_patterns = [
-            r'STORY:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)',
-            r'STORY:\s*\r?\n(.*?)(?=\r?\n\s*[-]{5,}|\r?\n\s*VIEWER ENGAGEMENT:|\Z)',
-            r'STORY:\s*(.*?)(?=\n\s*[-]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)',
-            r'(?i)story:\s*\n(.*?)(?=\n\s*[-]{5,}|\n\s*viewer engagement:|\Z)'
-        ]
-        engagement_patterns = [
-            r'VIEWER ENGAGEMENT:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)',
-            r'VIEWER ENGAGEMENT:\s*\r?\n(.*?)(?=\n\s*[-]{5,}|\Z)',
-            r'VIEWER ENGAGEMENT:\s*(.*?)(?=\n\s*[-]{5,}|\Z)',
-            r'(?i)viewer engagement:\s*\n(.*?)(?=\n\s*[-]{5,}|\Z)'
-        ]
-        extracted_text = ""
-        sections_found = 0
-        story_match = None
-        for pattern in story_patterns:
-            story_match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-            if story_match: break
-        if story_match:
-            story_content = story_match.group(1).strip()
-            if story_content:
-                extracted_text += story_content + "\n\n"
-                sections_found += 1
-                logging.info(f"✅ STORY bölümü bulundu ({len(story_content)} karakter)")
-        engagement_match = None
-        for pattern in engagement_patterns:
-            engagement_match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-            if engagement_match: break
-        if engagement_match:
-            engagement_content = engagement_match.group(1).strip()
-            if engagement_content:
-                extracted_text += engagement_content
-                sections_found += 1
-                logging.info(f"✅ VIEWER ENGAGEMENT bölümü bulundu ({len(engagement_content)} karakter)")
-        if sections_found == 0:
-            logging.warning("❌ Hiçbir hedef bölüm bulunamadı! Tüm metin kullanılacak.")
+        story_pattern = r'STORY:\s*(.*?)(?=\n\s*[-=]{5,}|\n\s*VIEWER ENGAGEMENT:|\Z)'
+        engagement_pattern = r'VIEWER ENGAGEMENT:\s*(.*?)(?=\n\s*[-=]{5,}|\Z)'
+        story_match = re.search(story_pattern, text, re.DOTALL | re.IGNORECASE)
+        engagement_match = re.search(engagement_pattern, text, re.DOTALL | re.IGNORECASE)
+        extracted_parts = []
+
+        if story_match and story_match.group(1).strip():
+            content = story_match.group(1).strip()
+            extracted_parts.append(content)
+            logging.info(f"✅ STORY bölümü bulundu ({len(content)} karakter).")
+        else:
+            logging.warning("STORY bölümü bulunamadı veya boş.")
+
+        if engagement_match and engagement_match.group(1).strip():
+            content = engagement_match.group(1).strip()
+            extracted_parts.append(content)
+            logging.info(f"✅ VIEWER ENGAGEMENT bölümü bulundu ({len(content)} karakter).")
+        else:
+            logging.warning("VIEWER ENGAGEMENT bölümü bulunamadı veya boş.")
+
+        if not extracted_parts:
+            logging.error("❌ Hiçbir hedef bölüm bulunamadı! Fallback olarak tüm metin kullanılacak.")
             return text.strip()
-        extracted_text = extracted_text.strip()
-        logging.info(f"✅ Toplam {sections_found} bölüm çıkarıldı ({len(extracted_text)} karakter)")
-        return extracted_text
+        
+        final_text = "\n\n".join(extracted_parts)
+        logging.info(f"✅ Toplam {len(extracted_parts)} bölüm birleştirildi ({len(final_text)} karakter).")
+        return final_text
     except Exception as e:
-        logging.error(f"❌ Bölüm çıkarma hatası: {e}. Tüm metin kullanılacak.")
+        logging.error(f"❌ Bölüm çıkarma hatası: {e}. Fallback olarak tüm metin kullanılacak.")
         return text.strip()
 
 def fix_long_sentences(text):
+    """API limitini aşabilecek çok uzun cümleleri, anlamı bozmayacak şekilde noktalama işaretlerinden böler."""
     logging.info("🔧 Uzun cümleler kontrol ediliyor ve düzeltiliyor...")
     sentences = re.split(r'(?<=[.!?])\s+', text)
     fixed_sentences = []
+    
     for sentence in sentences:
         sentence = sentence.strip()
-        if not sentence: continue
+        if not sentence:
+            continue
+            
         if len(sentence.encode('utf-8')) <= MAX_SENTENCE_BYTES:
             fixed_sentences.append(sentence)
         else:
-            logging.warning(f"   ⚠️ Uzun cümle bulundu: {len(sentence.encode('utf-8'))} byte - bölünüyor...")
-            broken_parts = break_long_sentence_naturally(sentence)
-            fixed_sentences.extend(broken_parts)
+            logging.warning(f"Uzun cümle bulundu ({len(sentence.encode('utf-8'))} byte), bölünüyor...")
+            parts = re.split(r'(,\s*(?:and|but|or|so|yet|for|nor|however|therefore|moreover|which|that|who)\s+|;\s+|:\s+)', sentence)
+            new_sentence_parts = []
+            current_part = ""
+            for part in parts:
+                if len((current_part + part).encode('utf-8')) > MAX_SENTENCE_BYTES and current_part:
+                    new_sentence_parts.append(current_part.strip())
+                    current_part = part
+                else:
+                    current_part += part
+            if current_part:
+                new_sentence_parts.append(current_part.strip())
+            fixed_sentences.extend(new_sentence_parts)
+    
     result = ' '.join(fixed_sentences)
-    logging.info("✅ Tüm uzun cümleler başarıyla düzeltildi")
+    logging.info("✅ Uzun cümle düzeltme işlemi tamamlandı.")
     return result
 
-def break_long_sentence_naturally(sentence):
-    parts = []
-    natural_patterns = [
-        r'(,\s+(?:and|but|or|so|yet|for|nor)\s+)', r'(,\s+(?:however|therefore|moreover|furthermore|nevertheless)\s+)',
-        r'(;\s+)', r'(,\s+(?:which|that|who|where|when)\s+)', r'(,\s+)', r'(:\s+)'
-    ]
-    current_sentence = sentence
-    for pattern in natural_patterns:
-        if len(current_sentence.encode('utf-8')) <= MAX_SENTENCE_BYTES: break
-        split_parts = re.split(pattern, current_sentence)
-        if len(split_parts) > 1:
-            temp_parts = []
-            current_part = ""
-            for part in split_parts:
-                test_part = current_part + part
-                if len(test_part.encode('utf-8')) <= MAX_SENTENCE_BYTES:
-                    current_part = test_part
-                else:
-                    if current_part.strip():
-                        if not current_part.rstrip().endswith(('.', '!', '?')): current_part = current_part.rstrip() + '.'
-                        temp_parts.append(current_part.strip())
-                    current_part = part
-            if current_part.strip():
-                if not current_part.rstrip().endswith(('.', '!', '?')): current_part = current_part.rstrip() + '.'
-                temp_parts.append(current_part.strip())
-            if len(temp_parts) > 1: return temp_parts
-    return break_by_words(sentence)
-
-def break_by_words(sentence):
-    words = sentence.split()
-    parts = []
-    current_part = ""
-    for word in words:
-        test_part = current_part + " " + word if current_part else word
-        if len(test_part.encode('utf-8')) <= MAX_SENTENCE_BYTES - 10:
-            current_part = test_part
-        else:
-            if current_part:
-                if not current_part.rstrip().endswith(('.', '!', '?')): current_part = current_part.rstrip() + '.'
-                parts.append(current_part.strip())
-            current_part = word
-    if current_part:
-        if not current_part.rstrip().endswith(('.', '!', '?')): current_part = current_part.rstrip() + '.'
-        parts.append(current_part.strip())
-    return parts
-
 def smart_text_splitter(text, max_length=API_CHUNK_SIZE):
-    logging.info("🧠 Metin akıllı şekilde bölünüyor...")
+    """Metni, cümle ve paragraf sonlarını dikkate alarak API limitlerine uygun parçalara böler."""
+    logging.info("🧠 Metin, API için akıllı parçalara ayrılıyor...")
     text = fix_long_sentences(text)
     chunks = []
     remaining_text = text
+    
     while len(remaining_text.encode('utf-8')) > max_length:
-        split_pos = find_safe_split_position(remaining_text, max_length)
-        if split_pos <= 0: split_pos = len(remaining_text) // 2
+        split_pos = -1
+        possible_split = remaining_text.rfind('.', 0, max_length)
+        if possible_split != -1: split_pos = possible_split + 1
+        possible_split = remaining_text.rfind('\n', 0, max_length)
+        if possible_split > split_pos: split_pos = possible_split + 1
+        if split_pos == -1:
+            possible_split = remaining_text.rfind(' ', 0, max_length)
+            if possible_split != -1: split_pos = possible_split + 1
+        if split_pos == -1: split_pos = max_length
         chunk = remaining_text[:split_pos].strip()
-        if chunk: chunks.append(chunk)
+        if chunk:
+            chunks.append(chunk)
         remaining_text = remaining_text[split_pos:].strip()
-    if remaining_text.strip(): chunks.append(remaining_text.strip())
-    logging.info(f"✅ Metin {len(chunks)} parçaya güvenli şekilde bölündü")
+    
+    if remaining_text:
+        chunks.append(remaining_text)
+    
+    logging.info(f"✅ Metin {len(chunks)} parçaya güvenli şekilde bölündü.")
     return chunks
 
-def find_safe_split_position(text, max_length):
+def test_api_key(api_key, key_number):
+    """Verilen Google Cloud API anahtarının geçerli olup olmadığını test eder."""
     try:
-        if len(text.encode('utf-8')) <= max_length: return len(text)
-        for i in range(min(len(text), max_length), max_length // 2, -1):
-            if i < len(text) and text[i-1] in '.!?': return i
-        paragraph_end = text.rfind('\n', 0, max_length)
-        if paragraph_end > max_length // 2: return paragraph_end
-        word_end = text.rfind(' ', 0, max_length)
-        if word_end > max_length // 2: return word_end
-        return max_length // 2
-    except Exception as e:
-        logging.error(f"❌ Güvenli bölme hatası: {e}")
-        return max_length // 2
+        logging.info(f"🔍 API anahtarı #{key_number} test ediliyor...")
+        if not api_key or len(api_key) < 30:
+            logging.error(f"❌ API anahtarı #{key_number} geçersiz formatta (çok kısa).")
+            return False
+        
+        test_url = f"https://texttospeech.googleapis.com/v1/voices?key={api_key}"
+        response = requests.get(test_url, timeout=10)
+        
+        if response.status_code == 200:
+            logging.info(f"✅ API anahtarı #{key_number} geçerli.")
+            return True
+        else:
+            logging.error(f"❌ API anahtarı #{key_number} geçersiz. Durum Kodu: {response.status_code}, Mesaj: {response.text}")
+            return False
+    except requests.exceptions.RequestException as e:
+        logging.error(f"❌ API anahtarı #{key_number} test edilirken ağ hatası: {e}")
+        return False
 
-# --- GÜNCELLENMİŞ: Google Cloud Kütüphanesi ile Ses Üretimi ---
-
-def process_single_chunk(client, chunk, chunk_id, recursion_depth=0):
-    """Tek bir metin parçasını sese dönüştürür."""
+def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
+    """Tek bir metin parçasını seslendirir."""
     if recursion_depth > MAX_RECURSION_DEPTH:
         logging.error(f"❌ Parça {chunk_id}: Maksimum bölme derinliği aşıldı! Atlanıyor...")
         return None
+    
     try:
-        logging.info(f"      📏 Parça {chunk_id} boyutu: {len(chunk.encode('utf-8'))} byte")
-        synthesis_input = texttospeech.SynthesisInput(text=chunk)
-        voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Chirp3-HD-Enceladus")
-        audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-            speaking_rate=0.99,
-            sample_rate_hertz=SAMPLE_RATE
-        )
-        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-        logging.info(f"      ✅ Parça {chunk_id} başarıyla işlendi")
-        return response.audio_content
+        logging.info(f"➡️ Parça {chunk_id} işleniyor ({len(chunk.encode('utf-8'))} byte)...")
+        url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
+        data = {
+            "input": {"text": chunk},
+            "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Enceladus"},
+            "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.99, "sampleRateHertz": SAMPLE_RATE}
+        }
+        response = requests.post(url, json=data, timeout=60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'audioContent' in result:
+                audio_data = base64.b64decode(result['audioContent'])
+                logging.info(f"✅ Parça {chunk_id} başarıyla seslendirildi.")
+                return audio_data
+            else:
+                logging.error(f"❌ Parça {chunk_id}: API yanıtında 'audioContent' bulunamadı.")
+                return None
+        else:
+            error_msg = f"HTTP {response.status_code}"
+            try:
+                error_msg = response.json().get('error', {}).get('message', error_msg)
+            except json.JSONDecodeError:
+                error_msg = response.text
+            logging.error(f"❌ Parça {chunk_id} API hatası: {error_msg}")
+            if "too long" in error_msg.lower() or "exceeds the limit" in error_msg.lower():
+                logging.warning(f"🔪 Parça {chunk_id} çok uzun geldi, daha küçük parçalara bölünüyor...")
+                smaller_chunks = smart_text_splitter(chunk, max_length=API_CHUNK_SIZE // 2)
+                combined_audio = b''
+                for i, small_chunk in enumerate(smaller_chunks):
+                    small_audio = process_single_chunk(small_chunk, api_key, f"{chunk_id}.{i+1}", recursion_depth + 1)
+                    if small_audio:
+                        combined_audio += small_audio
+                    else:
+                        return None
+                return combined_audio
+            return None
     except Exception as e:
-        logging.error(f"      ❌ Parça {chunk_id} API hatası: {e}")
-        if "too long" in str(e).lower() and recursion_depth < MAX_RECURSION_DEPTH:
-            logging.warning(f"         🔪 Parça {chunk_id} çok uzun, daha küçük parçalara bölünüyor...")
-            smaller_chunks = smart_text_splitter(chunk, 1500)
-            combined_audio = b''
-            for i, small_chunk in enumerate(smaller_chunks):
-                small_audio = process_single_chunk(client, small_chunk, f"{chunk_id}.{i+1}", recursion_depth + 1)
-                if small_audio: combined_audio += small_audio
-            return combined_audio
+        logging.error(f"❌ Parça {chunk_id} işlenirken beklenmedik hata: {e}")
         return None
 
-def text_to_speech_with_sa_key(text, worker_project_id):
-    """Ana TTS fonksiyonu - Secret Manager'dan alınan anahtarla çalışır."""
-    try:
-        key_path = load_sa_key_from_secret_manager(worker_project_id)
-        if not key_path:
-            raise Exception("Servis hesabı anahtarı Secret Manager'dan yüklenemedi.")
-            
-        credentials = service_account.Credentials.from_service_account_file(key_path)
-        client = texttospeech.TextToSpeechClient(credentials=credentials)
-        logging.info("✅ Text-to-Speech client (Servis Hesabı) başarıyla oluşturuldu.")
-        
-        text_chunks = smart_text_splitter(text)
-        
+def text_to_speech_process(text, api_keys):
+    """Metni seslendirmek için tüm süreci yönetir, geçerli API anahtarlarını dener."""
+    logging.info("Geçerli API anahtarları bulunuyor...")
+    valid_keys = [(i, key) for i, key in enumerate(api_keys, 1) if test_api_key(key, i)]
+    
+    if not valid_keys:
+        logging.critical("❌ Hiçbir geçerli API anahtarı bulunamadı! İşlem durduruluyor.")
+        return None
+    
+    logging.info(f"✅ {len(valid_keys)} adet geçerli API anahtarı bulundu.")
+    text_chunks = smart_text_splitter(text)
+
+    for key_number, api_key in valid_keys:
+        logging.info(f"\n🔄 API anahtarı #{key_number} ile seslendirme deneniyor...")
         combined_audio_content = b''
+        successful_chunks = 0
+        
         for i, chunk in enumerate(text_chunks, 1):
-            logging.info(f"   ➡️ Parça {i}/{len(text_chunks)} işleniyor...")
-            audio_data = process_single_chunk(client, chunk, str(i))
+            audio_data = process_single_chunk(chunk, api_key, str(i))
             if audio_data:
                 combined_audio_content += audio_data
+                successful_chunks += 1
                 if i < len(text_chunks):
                     silence = b'\x00\x00' * int(SAMPLE_RATE * 0.2)
                     combined_audio_content += silence
             else:
-                logging.error(f"    ❌ Parça {i} başarısız oldu, ses üretimi durduruluyor.")
-                return None
+                logging.error(f"Parça {i} bu API anahtarı ile başarısız oldu. Sonraki anahtar denenecek.")
+                break
         
-        logging.info("✅ Tüm parçalar başarıyla birleştirildi!")
-        final_audio = apply_fade_out(combined_audio_content)
-        final_audio += b'\x00\x00' * int(10 * SAMPLE_RATE)
-        logging.info("➕ Sesin sonuna 10 saniye sessizlik eklendi.")
-        return final_audio
+        if successful_chunks == len(text_chunks):
+            logging.info(f"🎉 Tüm parçalar API anahtarı #{key_number} ile başarıyla işlendi!")
+            final_audio = apply_fade_out(combined_audio_content)
+            logging.info("➕ Sesin sonuna 10 saniye sessizlik ekleniyor...")
+            silence_bytes = b'\x00\x00' * (SAMPLE_RATE * 10)
+            final_audio += silence_bytes
+            return final_audio
 
-    except Exception as e:
-        logging.error(f"❌ TTS genel hatası: {e}")
-        return None
+    logging.critical("❌ Tüm API anahtarları denendi ancak seslendirme tamamlanamadı.")
+    return None
 
 def save_audio(audio_content, output_dir, filename='ses.wav'):
-    """Ses dosyasını kaydeder."""
+    """Ses verisini belirtilen yola .wav dosyası olarak kaydeder."""
+    if not audio_content:
+        logging.error("❌ Kaydedilecek ses verisi yok!")
+        return None
     try:
-        if not audio_content:
-            logging.error("❌ Kaydedilecek ses verisi yok!")
-            return None
         full_path = os.path.join(output_dir, filename)
         with wave.open(full_path, 'wb') as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
             wav_file.setframerate(SAMPLE_RATE)
             wav_file.writeframes(audio_content)
-        file_size = os.path.getsize(full_path)
-        logging.info(f"✅ Ses dosyası kaydedildi: {full_path} ({file_size:,} byte)")
+        logging.info(f"✅ Ses dosyası kaydedildi: {full_path} ({os.path.getsize(full_path):,} byte)")
         return full_path
     except Exception as e:
-        logging.error(f"❌ Ses kaydetme hatası: {e}")
+        logging.error(f"❌ Ses dosyası kaydedilirken hata: {e}")
         return None
 
 def seconds_to_srt_time(seconds):
-    """Saniyeyi SRT formatına çevirir."""
-    try:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        milliseconds = int((seconds - int(seconds)) * 1000)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
-    except:
-        return "00:00:00,000"
+    """Saniye değerini SRT altyazı formatına (HH:MM:SS,mmm) çevirir."""
+    millis = int((seconds - int(seconds)) * 1000)
+    seconds = int(seconds)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
 
 def generate_synchronized_srt(audio_file_path, output_dir):
-    """Whisper ile senkronize SRT altyazısı oluşturur."""
+    """Oluşturulan ses dosyasını OpenAI Whisper ile deşifre ederek senkronize SRT altyazısı oluşturur."""
     try:
-        logging.info("\n🤖 Whisper modeli yükleniyor...")
+        logging.info(f"\n🤖 Whisper modeli yükleniyor (base)...")
         model = whisper.load_model("base")
-        logging.info("🎤 Ses dosyası deşifre ediliyor...")
+        logging.info(f"🎤 Ses dosyası deşifre ediliyor: {audio_file_path}")
         result = model.transcribe(audio_file_path, fp16=False, language="en")
-        srt_content = []
-        for i, segment in enumerate(result['segments'], 1):
-            start_time = seconds_to_srt_time(segment['start'])
-            end_time = seconds_to_srt_time(segment['end'])
-            text = segment['text'].strip()
-            srt_content.extend([str(i), f"{start_time} --> {end_time}", text, ""])
+        srt_content = [f"{i}\n{seconds_to_srt_time(s['start'])} --> {seconds_to_srt_time(s['end'])}\n{s['text'].strip()}\n" for i, s in enumerate(result['segments'], 1)]
         srt_file_path = os.path.join(output_dir, "altyazi.srt")
         with open(srt_file_path, 'w', encoding='utf-8') as srt_file:
             srt_file.write('\n'.join(srt_content))
-        logging.info(f"✅ SRT altyazı dosyası oluşturuldu: {srt_file_path}")
+        logging.info(f"✅ Senkronize SRT altyazı dosyası oluşturuldu: {srt_file_path}")
         return srt_file_path
     except Exception as e:
-        logging.error(f"❌ Altyazı oluşturma hatası: {e}")
+        logging.critical(f"❌ Whisper ile altyazı oluşturma hatası: {e}")
         return None
 
-# --- ANA İŞ AKIŞI FONKSİYONU ---
-def run_audio_and_srt_process(story_text, output_dir, worker_project_id):
-    """Ana ses ve senkronize altyazı üretme iş akışını yönetir."""
-    logging.info("--- Ses ve Senkronize Altyazı Üretim Modülü Başlatıldı (Secret Manager & WAV) ---")
+# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
+def run_audio_and_srt_process(story_text, output_dir, api_keys_list=None):
+    """
+    Ana ses ve altyazı üretme iş akışını yönetir.
+    API anahtarları sağlanmazsa Secret Manager'dan almayı dener.
+    """
+    logging.info("--- Ses ve Senkronize Altyazı Üretim Modülü Başlatıldı ---")
     
+    keys_to_use = []
+    if api_keys_list:
+        logging.info("API anahtarları parametre olarak sağlandı, onlar kullanılacak.")
+        keys_to_use = api_keys_list
+    else:
+        logging.warning("API anahtarları parametre olarak sağlanmadı. Secret Manager'dan alınacak...")
+        try:
+            if PROJECT_ID == "sizin-google-cloud-proje-id-niz":
+                raise ValueError("Lütfen koddaki PROJECT_ID değişkenini kendi Google Cloud Proje ID'niz ile güncelleyin.")
+            keys_to_use = get_api_keys_from_secret_manager()
+        except Exception as e:
+            # Hata zaten get_api_keys_from_secret_manager içinde loglandı, burada süreci durdur.
+            raise Exception(f"Secret Manager'dan API anahtarları alınamadı: {e}")
+
+    if not keys_to_use:
+         raise Exception("Kullanılacak API anahtarı bulunamadı.")
+
     target_text = extract_target_sections(story_text)
     if not target_text:
-        raise Exception("Hedef bölümler bulunamadı!")
+        raise Exception("Metin içinde 'STORY:' veya 'VIEWER ENGAGEMENT:' bölümleri bulunamadı.")
     
-    logging.info(f"\n📊 İşlenecek metin bilgileri:")
-    logging.info(f"    📝 Karakter: {len(target_text):,}")
-    logging.info(f"    📝 Kelime: {len(target_text.split()):,}")
-    logging.info(f"    📝 Byte: {len(target_text.encode('utf-8')):,}")
+    logging.info(f"İşlenecek metin boyutu: {len(target_text)} karakter.")
     
-    logging.info("\n🎵 Chirp3-HD-Enceladus sesi ile işleniyor...")
-    audio_content = text_to_speech_with_sa_key(target_text, worker_project_id)
-    if audio_content is None:
-        raise Exception("Ses içeriği üretilemedi.")
+    audio_content = text_to_speech_process(target_text, keys_to_use)
+    if not audio_content:
+        raise Exception("Tüm API anahtarları denendi ancak ses içeriği üretilemedi.")
     
     audio_file_path = save_audio(audio_content, output_dir)
     if not audio_file_path:
-        raise Exception("WAV dosyası kaydedilemedi.")
+        raise Exception("Oluşturulan ses dosyası diske kaydedilemedi.")
         
     srt_file_path = generate_synchronized_srt(audio_file_path, output_dir)
+    if not srt_file_path:
+        logging.warning("Altyazı dosyası oluşturulamadı ancak işlem devam ediyor.")
     
+    logging.info("--- Ses ve Altyazı Üretimi Başarıyla Tamamlandı ---")
     return audio_file_path, srt_file_path
