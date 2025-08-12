@@ -83,7 +83,7 @@ def configure_gemini():
         api_key = API_KEYS[current_api_key_index]
         logger.info(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        model = genai.GenerativeModel("gemini-2.5-pro")
         logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
