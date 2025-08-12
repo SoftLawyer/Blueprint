@@ -132,7 +132,6 @@ def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
     raise Exception("Tüm API anahtarları denendi ve hepsi başarısız oldu.")
 
 # --- Yardımcı Fonksiyonlar (Orijinal Kodunuz) ---
-# ... (count_words, clean_story_text, build_prompt, ThumbnailCanvas sınıfı aynı kalacak) ...
 def count_words(text: str) -> int:
     if not text or not isinstance(text, str): return 0
     return len(re.sub(r'\*', '', text.strip()).split())
@@ -274,11 +273,11 @@ class ThumbnailCanvas:
 
 # --- ANA İŞ AKIŞI FONKSİYONU ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_project_id):
-    """Secret Manager'dan anahtar okuyarak Vertex AI kullanır."""
-    logger.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (Secret Manager & Vertex AI) ---")
+    """Secret Manager'dan anahtar okuyarak Gemini API kullanır."""
+    logger.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (Gemini API Key) ---")
     
-    if not configure_vertex_ai(worker_project_id):
-        raise Exception("Thumbnail üretimi için Vertex AI başlatılamadı.")
+    if not load_api_keys_from_secret_manager(worker_project_id):
+        raise Exception("Thumbnail üretimi için Gemini API anahtarları yüklenemedi.")
     
     clean_story = clean_story_text(story_text)
     logger.info(f"📝 Hikaye metni temizlendi: {len(clean_story)} karakter")
@@ -290,8 +289,9 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
     for attempt in range(max_retries):
         logger.info(f"🔄 Deneme {attempt + 1}/{max_retries}")
         try:
-            current_parts = ask_vertex_ai(build_prompt(clean_story))
+            current_parts = ask_gemini(build_prompt(clean_story))
             if current_parts is None:
+                # ask_gemini artık hata durumunda exception fırlatıyor, bu blok nadiren çalışır
                 logger.error(f"❌ Gemini'den yanıt alınamadı (deneme {attempt + 1})")
                 continue
             
@@ -311,7 +311,7 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
         except Exception as e:
             logger.error(f"❌ Gemini çağrısı sırasında hata (deneme {attempt + 1}): {e}")
             if attempt == max_retries - 1:
-                raise e
+                raise e # Son denemede hatayı yukarıya fırlat
             continue
     
     if parts is None:
