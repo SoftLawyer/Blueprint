@@ -1,4 +1,4 @@
-# worker.py (v10 - Merkezi Hata Kaydı)
+# worker.py (v11 - Gelişmiş Hata Ayıklama)
 
 import os
 import logging
@@ -134,6 +134,9 @@ def main_loop():
         story_title = None
         temp_dir = None
         try:
+            # YENİ HATA AYIKLAMA LOGLARI
+            logging.info("Döngünün başına gelindi. hikayeuretir çağrılacak...")
+            
             (
                 story_content,
                 story_title_from_module,
@@ -141,6 +144,9 @@ def main_loop():
                 api_keys,
                 formatted_text
             ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
+            
+            # YENİ HATA AYIKLAMA LOGLARI
+            logging.info("✅ hikayeuretir başarıyla tamamlandı. Başlık kontrol edilecek...")
             
             story_title = story_title_from_module
 
