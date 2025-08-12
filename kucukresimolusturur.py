@@ -184,7 +184,7 @@ class ThumbnailCanvas:
         if extra_detail: extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width); total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
         total_height += self.style.bottom_margin; return total_height
     def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
-        revenge_area_height = 120; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
+        revenge_area_height = 140; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
         self._scale_sizes(scale_factor); self._scale_spacing(spacing_factor); self._clamp_and_reload_fonts()
         for attempt in range(max_attempts):
             current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); height_ratio = current_height / target_height
@@ -236,7 +236,7 @@ class ThumbnailCanvas:
             except (IOError, OSError): continue
         try: revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
         except: revenge_font = self.font_revenge
-        text_width = self._text_width(revenge_text, revenge_font); text_height = self._text_height(revenge_font); padding = 20; bg_height = text_height + (padding * 2); bg_y = self.style.height - bg_height - 45; bg_x = self.style.left_margin
+        text_width = self._text_width(revenge_text, revenge_font); text_height = self._text_height(revenge_font); padding = 20; bg_height = text_height + (padding * 2); bg_y = self.style.height - bg_height - 20; bg_x = self.style.left_margin
         bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0)); bg_draw = ImageDraw.Draw(bg_img); bg_draw.rounded_rectangle([0, 0, available_width, bg_height], radius=15, fill=(*self.style.revenge_bg_colour, 240)); self.image.paste(bg_img, (bg_x, bg_y), bg_img)
         text_x = bg_x + (available_width - text_width) // 2; text_y = bg_y + padding
         self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour, outline_color=(0, 0, 0), outline_width=4)
@@ -255,14 +255,16 @@ class ThumbnailCanvas:
             except (IOError, OSError): continue
         try: channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
         except: channel_font = self.font_channel
-        text_width = self._text_width(channel_text, channel_font); text_height = self._text_height(channel_font); box_height = text_height + (padding * 2); box_width = target_width - 20; box_y = target_height - box_height - 25; box_x = x + 10
+        text_width = self._text_width(channel_text, channel_font); text_height = self._text_height(channel_font); box_height = text_height + (padding * 2); box_width = target_width - 20
+        # Kanal adı kutusunu daha yukarı taşıyoruz (revenge text ile çakışmayı önlemek için)
+        box_y = target_height - box_height - 80; box_x = x + 10
         box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0)); box_draw = ImageDraw.Draw(box_img); box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230)); box_draw.rounded_rectangle([1, 1, box_width-1, box_height-1], radius=12, outline=(*self.style.channel_border, 255), width=3); self.image.paste(box_img, (box_x, box_y), box_img)
         text_x = box_x + (box_width - text_width) // 2; text_y = box_y + padding
         self._draw_text_with_outline((text_x, text_y), channel_text, channel_font, self.style.channel_text, outline_color=(0, 0, 0), outline_width=2)
         return target_width
     def compose(self, main_hook, setup, revenge_line, extra_detail, profile_pic_path):
         profile_width = self._draw_profile_section(profile_pic_path, CHANNEL_NAME); text_area_width = self.style.width - profile_width - self.style.left_margin - self.style.right_margin; total_words = sum(count_words(t) for t in [main_hook, setup, revenge_line, extra_detail]); self._adjust_for_perfect_fill(main_hook, setup, revenge_line, extra_detail, text_area_width, total_words)
-        revenge_area_height = 120; total_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); available_height = self.style.height - self.style.bottom_margin - revenge_area_height; y = max(self.style.top_margin, (available_height - total_height) // 2)
+        revenge_area_height = 140; total_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); available_height = self.style.height - self.style.bottom_margin - revenge_area_height; y = max(self.style.top_margin, (available_height - total_height) // 2)
         for line_parts in self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_title); y += self._text_height(self.font_title) + self.current_line_spacing
         y += self.current_section_spacing
         for line_parts in self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal); y += self._text_height(self.font_normal) + self.current_line_spacing
@@ -328,7 +330,6 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
     try:
         canvas = ThumbnailCanvas(STYLE)
         logger.info("✅ Canvas başarıyla oluşturuldu")
-        
         logger.info("🖼️ Thumbnail compose ediliyor...")
         canvas.compose(
             main_hook=parts.get("MAIN_HOOK", ""),
@@ -351,4 +352,7 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
         
     except Exception as e:
         logger.error(f"❌ Thumbnail oluşturma/kaydetme hatası: {e}", exc_info=True)
-        raise Exception(f"Thumbnail oluşturulamadı: {e}")
+        raise Exception(f"Thumbnail oluşturamadı: {e}")
+
+        
+        
