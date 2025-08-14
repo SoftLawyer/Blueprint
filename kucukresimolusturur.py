@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (Gemini API Key Uyumlu ve Font Ayarı Güncellenmiş Versiyon)
+﻿# kucukresimolusturur.py (Kelime Sayısı Güncellendi)
 
 from __future__ import annotations
 import json
@@ -10,7 +10,7 @@ from typing import Mapping, Optional
 import re
 import os
 
-# --- YENİ: Gemini ve Google Cloud Kütüphaneleri ---
+# --- Gemini ve Google Cloud Kütüphaneleri ---
 try:
     import google.generativeai as genai
     from google.cloud import secretmanager
@@ -26,7 +26,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 
-# --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ (İlgili Kısımlar Güncellendi) ---
+# --- Stil ve Kanal Ayarları ---
 @dataclass(frozen=True)
 class ThumbnailStyle:
     width: int = 1280; height: int = 720; bg_primary: tuple = (15, 15, 25)
@@ -39,11 +39,9 @@ class ThumbnailStyle:
     base_channel_font_size: int = 32
     min_title_font_size: int = 35; min_normal_font_size: int = 28
     min_revenge_font_size: int = 35
-    # GÜNCELLENDİ: Kanal adı yazısının sığması için minimum boyut düşürüldü.
     min_channel_font_size: int = 18
     max_title_font_size: int = 150; max_normal_font_size: int = 120
     max_revenge_font_size: int = 140
-    # YENİ: Kanal adı için maksimum font boyutu eklendi.
     max_channel_font_size: int = 40
     left_margin: int = 15; top_margin: int = 15; bottom_margin: int = 20
     right_margin: int = 15; base_line_spacing: int = 8; min_line_spacing: int = 3
@@ -54,10 +52,10 @@ class ThumbnailStyle:
 STYLE = ThumbnailStyle()
 CHANNEL_NAME = "REVENGE WITH ROBERT"
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s", stream=sys.stderr)
+logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(asctime)s | %(message)s", stream=sys.stderr, datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
 
-# --- GÜNCELLENMİŞ: Gemini API Key Fonksiyonları ---
+# --- Gemini API Key Fonksiyonları ---
 
 def load_api_keys_from_secret_manager(project_id):
     """API anahtarlarını Secret Manager'dan yükler."""
@@ -71,12 +69,15 @@ def load_api_keys_from_secret_manager(project_id):
         payload = response.payload.data.decode("UTF-8")
         API_KEYS = [line.strip() for line in payload.splitlines() if line.strip()]
         if not API_KEYS:
-            logger.error("❌ Secret Manager'da API anahtarı bulunamadı.")
+            logger.error("❌ Secret Manager'da 'gemini-api-anahtarlari' secret'ı içinde API anahtarı bulunamadı.")
             return False
         logger.info(f"🔑 {len(API_KEYS)} Gemini API anahtarı başarıyla yüklendi.")
         return True
+    except google_exceptions.NotFound:
+        logger.error(f"❌ Secret Manager'da 'gemini-api-anahtarlari' secret'ı bulunamadı (Proje: {project_id}).")
+        return False
     except Exception as e:
-        logger.error(f"❌ Secret Manager'dan anahtar okunurken hata oluştu: {e}")
+        logger.error(f"❌ Secret Manager'dan anahtar okunurken kritik hata oluştu: {e}")
         return False
 
 def configure_gemini():
@@ -86,9 +87,9 @@ def configure_gemini():
         return None
     try:
         api_key = API_KEYS[current_api_key_index]
-        logger.info(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
+        logger.info(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-pro-latest")
+        model = genai.GenerativeModel("gemini-2.5-pro")
         logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -97,13 +98,16 @@ def configure_gemini():
         return configure_gemini()
 
 def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
-    """Gemini API çağrısı - hata durumunda Exception fırlatır."""
+    """Gemini API çağrısı yapar. Hata durumunda Exception fırlatır, anahtar değiştirir."""
     global current_api_key_index, model
+    
     if current_api_key_index >= len(API_KEYS):
         current_api_key_index = 0
-        logger.warning("⚠️ Tüm API anahtarları denendi, baştan başlanıyor.")
+        logger.warning("⚠️ Tüm API anahtarları denendi, döngü başa alınıyor.")
 
-    while current_api_key_index < len(API_KEYS):
+    initial_key_index = current_api_key_index
+
+    while True:
         try:
             if model is None:
                 model = configure_gemini()
@@ -111,11 +115,13 @@ def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
                     raise Exception("Yapılandırılacak geçerli API anahtarı kalmadı.")
             
             generation_config = {"temperature": 0.7, "top_p": 0.8, "top_k": 40, "max_output_tokens": 2048}
+            logger.info("🤖 Gemini'ye istek gönderiliyor...")
             response = model.generate_content(prompt, generation_config=generation_config)
             
             if not response.text:
-                raise Exception("Gemini'den boş yanıt alındı")
+                raise Exception("Gemini'den boş yanıt alındı (response.text boş).")
             
+            # JSON bloğunu temizle
             txt = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE)
             result = json.loads(txt)
             
@@ -125,18 +131,26 @@ def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
             
             return result
             
-        except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied) as e:
-            logger.warning(f"⚠️ API anahtarı {current_api_key_index + 1} kotaya takıldı veya izin sorunu: {e}. Değiştiriliyor...")
+        except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied, google_exceptions.InvalidArgument) as e:
+            logger.warning(f"⚠️ API anahtarı {current_api_key_index + 1} ile ilgili sorun: {type(e).__name__}. Anahtar değiştiriliyor...")
             current_api_key_index += 1
-            model = None
+            model = None # Modeli sıfırla ki yeni anahtarla yeniden konfigüre edilsin
+            if current_api_key_index >= len(API_KEYS):
+                current_api_key_index = 0
+            if current_api_key_index == initial_key_index:
+                 raise Exception(f"Tüm API anahtarları denendi ve hepsi başarısız oldu. Son hata: {e}") from e
+
         except Exception as exc:
             logger.error(f"❌ API Anahtarı {current_api_key_index + 1} ile beklenmedik API hatası: {exc}")
+            # Beklenmedik hatalarda da anahtar değiştirmeyi dene
             current_api_key_index += 1
             model = None
-    
-    raise Exception("Tüm API anahtarları denendi ve hepsi başarısız oldu.")
+            if current_api_key_index >= len(API_KEYS):
+                current_api_key_index = 0
+            if current_api_key_index == initial_key_index:
+                 raise Exception(f"Tüm API anahtarları denendi ve hepsi başarısız oldu. Son beklenmedik hata: {exc}") from exc
 
-# --- Yardımcı Fonksiyonlar (Orijinal Kodunuz) ---
+# --- Yardımcı Fonksiyonlar ---
 def count_words(text: str) -> int:
     if not text or not isinstance(text, str): return 0
     return len(re.sub(r'\*', '', text.strip()).split())
@@ -147,36 +161,57 @@ def clean_story_text(story: str) -> str:
     story = re.sub(r'\s+', ' ', story).strip()
     if len(story) < 50: story = f"{story} Bu kişi büyük bir intikam planladı ve başarılı oldu."
     return story
+
+# GÜNCELLENDİ: build_prompt fonksiyonu yeni kelime aralığını yansıtacak şekilde değiştirildi.
 def build_prompt(story: str) -> str:
     clean_story = clean_story_text(story)
     return f"""
-Analyze this revenge story and create compelling YouTube thumbnail text with a TOTAL WORD COUNT between 80 and 100 words.
+Analyze this revenge story and create compelling YouTube thumbnail text with a TOTAL WORD COUNT between 60 and 100 words.
 Create 4 text sections:
-1. MAIN_HOOK: Most dramatic attention-grabber (28-33 words) - mark 4-5 key trigger words with *asterisks*
-2. SETUP: Context that builds tension (28-33 words) - mark 4-5 trigger words with *asterisks*
+1. MAIN_HOOK: Most dramatic attention-grabber (20-28 words) - mark 4-5 key trigger words with *asterisks*
+2. SETUP: Context that builds tension (20-28 words) - mark 4-5 trigger words with *asterisks*
 3. REVENGE_LINE: The ultimate revenge payoff (2-5 words, VERY PUNCHY AND SHORT)
-4. EXTRA_DETAIL: Additional dramatic impact (22-29 words) - mark 3-4 trigger words with *asterisks*
+4. EXTRA_DETAIL: Additional dramatic impact (18-26 words) - mark 3-4 trigger words with *asterisks*
 CRITICAL REQUIREMENTS:
-- TOTAL WORD COUNT: Must be between 80-100 words (excluding asterisks)
+- TOTAL WORD COUNT: Must be between 60-100 words (excluding asterisks)
 - Return ONLY valid JSON format with keys: "MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"
 Story:
 ---
 {clean_story}
 ---
 """.strip()
+
 class ThumbnailCanvas:
+    # ... Bu sınıfın içeriğinde herhangi bir değişiklik yapılmamıştır ...
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
         self.style = style; self.image = Image.new("RGB", (style.width, style.height), style.bg_primary); self.draw = ImageDraw.Draw(self.image); self._create_gradient_background(); self.current_title_size = style.base_title_font_size; self.current_normal_size = style.base_normal_font_size; self.current_revenge_size = style.base_revenge_font_size; self.current_channel_size = style.base_channel_font_size; self.current_line_spacing = style.base_line_spacing; self.current_section_spacing = style.base_section_spacing; self._load_fonts()
     def _create_gradient_background(self) -> None:
         for y in range(self.style.height): ratio = y / self.style.height; r = int(self.style.bg_primary[0] * (1 - ratio) + self.style.bg_secondary[0] * ratio); g = int(self.style.bg_primary[1] * (1 - ratio) + self.style.bg_secondary[1] * ratio); b = int(self.style.bg_primary[2] * (1 - ratio) + self.style.bg_secondary[2] * ratio); self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
     def _load_fonts(self) -> None:
-        font_options = [self.style.font_path, Path("impact.ttf"), Path("arial.ttf"), Path("Impact.ttf"), Path("Arial.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"), Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"), Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")]
+        font_options = [
+            self.style.font_path, 
+            Path("impact.ttf"), Path("Impact.ttf"), 
+            Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            Path("arial.ttf"), Path("Arial.ttf"),
+            Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf")
+        ]
         font_loaded = False
         for font_path in font_options:
             if font_path.exists():
-                try: self.font_title = ImageFont.truetype(str(font_path), self.current_title_size); self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size); self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size); self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size); font_loaded = True; logger.info(f"✅ Font yüklendi: {font_path}"); break
-                except (IOError, OSError) as e: logger.warning(f"⚠️ Font yüklenemedi {font_path}: {e}")
-        if not font_loaded: logger.warning("⚠️ Hiçbir TrueType font bulunamadı, varsayılan font kullanılıyor"); self.font_title = self.font_normal = self.font_revenge = self.font_channel = ImageFont.load_default()
+                try: 
+                    self.font_title = ImageFont.truetype(str(font_path), self.current_title_size)
+                    self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size)
+                    self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size)
+                    self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size)
+                    font_loaded = True
+                    logger.info(f"✅ Font başarıyla yüklendi: {font_path}")
+                    break
+                except (IOError, OSError) as e: 
+                    logger.warning(f"⚠️ Font dosyası bulundu ama yüklenemedi {font_path}: {e}")
+        if not font_loaded: 
+            logger.error("❌ Hiçbir TrueType font bulunamadı! Varsayılan font kullanılıyor. Lütfen 'impact.ttf' veya 'arial.ttf' yükleyin.")
+            self.font_title = self.font_normal = self.font_revenge = self.font_channel = ImageFont.load_default()
     def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
         if not text: return 0
         try: return font.getlength(text)
@@ -189,11 +224,11 @@ class ThumbnailCanvas:
         if extra_detail: extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width); total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
         total_height += self.style.bottom_margin; return total_height
     def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
-        revenge_area_height = 140; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 85 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 85 else 0.9 if total_words > 95 else 1.0
+        revenge_area_height = 140; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 65 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 65 else 0.9 if total_words > 95 else 1.0
         self._scale_sizes(scale_factor); self._scale_spacing(spacing_factor); self._clamp_and_reload_fonts()
         for attempt in range(max_attempts):
             current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); height_ratio = current_height / target_height
-            if 0.98 <= height_ratio <= 1.02: logger.info("✓ Perfect screen fill achieved!"); break
+            if 0.98 <= height_ratio <= 1.02: logger.info(f"✓ Mükemmel ekran doluluğuna ulaşıldı (Oran: {height_ratio:.2f})"); break
             if height_ratio < 0.98:
                 if self._can_increase_sizes(): self._scale_sizes(min(1.06, (1.0 / height_ratio)))
                 else: self._scale_spacing(1.08)
@@ -205,10 +240,10 @@ class ThumbnailCanvas:
     def _clamp_and_reload_fonts(self): self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size)); self.current_normal_size = max(self.style.min_normal_font_size, min(self.style.max_normal_font_size, self.current_normal_size)); self.current_revenge_size = max(self.style.min_revenge_font_size, min(self.style.max_revenge_font_size, self.current_revenge_size)); self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing)); self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing)); self._load_fonts()
     def _draw_text_with_outline(self, pos, text, font, fill_color, outline_color=None, outline_width=None):
         x, y = pos; outline_color = outline_color or self.style.text_stroke_color
-        if font is None: self.draw.text((x, y), text, fill=fill_color); return
+        if font is None or font.path is None: self.draw.text((x, y), text, fill=fill_color); return
         outline_width = outline_width or max(3, int(getattr(font, 'size', 30) / 30))
         try: self.draw.text((x, y), text, font=font, fill=fill_color, stroke_width=outline_width, stroke_fill=outline_color)
-        except: self.draw.text((x, y), text, font=font, fill=fill_color)
+        except TypeError: self.draw.text((x, y), text, font=font, fill=fill_color) # Fallback for older Pillow versions
     def _wrap_text_smart(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list:
         if not text: return []
         parts, current, in_highlight = [], "", False
@@ -249,11 +284,10 @@ class ThumbnailCanvas:
         try:
             avatar = Image.open(img_path).convert("RGBA")
         except (FileNotFoundError, Exception) as e:
-            logger.warning(f"Profil resmi yüklenemedi: {e}")
+            logger.warning(f"Profil resmi yüklenemedi: {img_path}. Varsayılan bir resim oluşturuluyor. Hata: {e}")
             avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
         target_width, target_height = 200, 720; avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS); x = self.style.width - target_width; self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
         channel_text = channel_name.upper(); best_channel_font_size = self.style.min_channel_font_size; padding = 15
-        # GÜNCELLENDİ: Font boyutu arama döngüsü artık stilden gelen max ve min değerleri kullanıyor.
         for font_size in range(self.style.max_channel_font_size, self.style.min_channel_font_size - 1, -2):
             try:
                 test_font = ImageFont.truetype(str(self.style.font_path), font_size)
@@ -262,7 +296,6 @@ class ThumbnailCanvas:
         try: channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
         except: channel_font = self.font_channel
         text_width = self._text_width(channel_text, channel_font); text_height = self._text_height(channel_font); box_height = text_height + (padding * 2); box_width = target_width - 20
-        # Kanal adı kutusunu daha yukarı taşıyoruz (revenge text ile çakışmayı önlemek için)
         box_y = target_height - box_height - 80; box_x = x + 10
         box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0)); box_draw = ImageDraw.Draw(box_img); box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230)); box_draw.rounded_rectangle([1, 1, box_width-1, box_height-1], radius=12, outline=(*self.style.channel_border, 255), width=3); self.image.paste(box_img, (box_x, box_y), box_img)
         text_x = box_x + (box_width - text_width) // 2; text_y = box_y + padding
@@ -279,64 +312,75 @@ class ThumbnailCanvas:
             for line_parts in self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal); y += self._text_height(self.font_normal) + self.current_line_spacing
         self._draw_revenge_text_with_background_bottom(revenge_line, profile_width)
 
-# --- ANA İŞ AKIŞI FONKSİYONU ---
+# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_project_id):
-    """Secret Manager'dan anahtar okuyarak Gemini API kullanır."""
-    logger.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (Gemini API Key) ---")
+    """Secret Manager'dan anahtar okuyarak Gemini API kullanır ve detaylı hata takibi yapar."""
+    logger.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (v3 - Kelime Sayısı 60-100) ---")
     
     if not load_api_keys_from_secret_manager(worker_project_id):
-        raise Exception("Thumbnail üretimi için Gemini API anahtarları yüklenemedi.")
+        raise Exception("Thumbnail üretimi için Gemini API anahtarları yüklenemedi. Secret Manager yapılandırmasını kontrol edin.")
     
     clean_story = clean_story_text(story_text)
     logger.info(f"📝 Hikaye metni temizlendi: {len(clean_story)} karakter")
     
     parts = None
     max_retries = 5
-    logger.info("🤖 Gemini ile thumbnail metni üretiliyor...")
+    last_error = None 
+    
+    logger.info("🤖 Gemini ile thumbnail metni üretimi için denemeler başlıyor...")
     
     for attempt in range(max_retries):
         logger.info(f"🔄 Deneme {attempt + 1}/{max_retries}")
         try:
             current_parts = ask_gemini(build_prompt(clean_story))
             if current_parts is None:
-                # ask_gemini artık hata durumunda exception fırlatıyor, bu blok nadiren çalışır
+                last_error = Exception("ask_gemini bilinmeyen bir nedenle None döndürdü.")
                 logger.error(f"❌ Gemini'den yanıt alınamadı (deneme {attempt + 1})")
                 continue
             
             total_words = sum(count_words(v) for v in current_parts.values())
-            logger.info(f"📊 Toplam kelime sayısı: {total_words}")
+            logger.info(f"📊 Üretilen metnin toplam kelime sayısı: {total_words}")
             
-            if 80 <= total_words <= 100:
+            # GÜNCELLENDİ: İstenen kelime aralığı 60-100 olarak değiştirildi.
+            if 60 <= total_words <= 100:
                 parts = current_parts
-                logger.info(f"✅ İdeal kelime sayısında metin üretildi: {total_words} kelime")
+                logger.info(f"✅ İdeal kelime sayısında ({total_words}) metin üretildi. Döngü sonlandırılıyor.")
                 break
-            elif 70 <= total_words <= 110:
+            # GÜNCELLENDİ: Kabul edilebilir aralık da yeni hedefe göre ayarlandı.
+            elif 55 <= total_words <= 105:
                 parts = current_parts
-                logger.warning(f"⚠️ Kabul edilebilir kelime sayısında metin: {total_words} kelime")
+                logger.warning(f"⚠️ Kabul edilebilir kelime sayısında ({total_words}) metin üretildi. Yine de bu metin kullanılacak.")
                 break
             else:
-                logger.warning(f"⚠️ Kelime sayısı hedef dışında: {total_words} (hedef: 80-100)")
+                # GÜNCELLENDİ: Hata mesajları yeni hedefi yansıtıyor.
+                logger.warning(f"⚠️ Kelime sayısı hedef dışında: {total_words} (hedef: 60-100). Tekrar denenecek.")
+                last_error = Exception(f"Kelime sayısı {total_words} hedef aralığın (60-100) dışında.")
+
         except Exception as e:
-            logger.error(f"❌ Gemini çağrısı sırasında hata (deneme {attempt + 1}): {e}")
+            logger.error(f"❌ Gemini çağrısı sırasında kritik hata (deneme {attempt + 1}): {e}")
+            last_error = e
             if attempt == max_retries - 1:
-                raise e # Son denemede hatayı yukarıya fırlat
+                logger.critical("❌ Son deneme de başarısız oldu.")
             continue
     
     if parts is None:
-        logger.error("❌ Tüm denemelere rağmen Gemini ile metin üretilemedi.")
-        raise Exception("Thumbnail metni üretilemedi, video üretimi durduruluyor.")
+        logger.error("❌ Tüm denemelere rağmen Gemini ile geçerli bir metin üretilemedi.")
+        if last_error:
+            raise Exception(f"Thumbnail metni üretilemedi. Son karşılaşılan hata: {last_error}") from last_error
+        else:
+            raise Exception("Thumbnail metni üretilemedi, ancak spesifik bir hata yakalanamadı.")
     
-    logger.info("\n📋 Üretilen thumbnail metinleri:")
+    logger.info("\n📋 Başarıyla Üretilen Thumbnail Metinleri:")
     for key, value in parts.items():
         word_count = count_words(value)
-        logger.info(f"  {key}: {word_count} kelime - {value[:50]}...")
+        logger.info(f"  {key}: {word_count} kelime - {value[:60]}...")
     
     logger.info("\n🎨 Thumbnail canvas oluşturuluyor...")
     
     try:
         canvas = ThumbnailCanvas(STYLE)
-        logger.info("✅ Canvas başarıyla oluşturuldu")
-        logger.info("🖼️ Thumbnail compose ediliyor...")
+        logger.info("✅ Canvas başarıyla oluşturuldu.")
+        logger.info("🖼️ Thumbnail üzerine metinler ve resim yerleştiriliyor (compose)...")
         canvas.compose(
             main_hook=parts.get("MAIN_HOOK", ""),
             setup=parts.get("SETUP", ""),
@@ -344,18 +388,18 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
             extra_detail=parts.get("EXTRA_DETAIL", ""),
             profile_pic_path=profile_photo_path,
         )
-        logger.info("✅ Thumbnail compose başarılı")
+        logger.info("✅ Thumbnail compose işlemi başarılı.")
         
         thumbnail_path = os.path.join(output_dir, "kucuk_resim.png")
         canvas.image.save(thumbnail_path, "PNG", quality=95)
-        logger.info(f"💾 Thumbnail kaydedildi: {thumbnail_path}")
+        logger.info(f"💾 Thumbnail başarıyla kaydedildi: {thumbnail_path}")
         
         file_size = os.path.getsize(thumbnail_path)
         logger.info(f"📏 Dosya boyutu: {file_size / 1024:.1f} KB")
         
-        logger.info("✅ Thumbnail üretimi tamamlandı!")
+        logger.info("✅ Thumbnail üretimi başarıyla tamamlandı!")
         return thumbnail_path
         
     except Exception as e:
-        logger.error(f"❌ Thumbnail oluşturma/kaydetme hatası: {e}", exc_info=True)
-        raise Exception(f"Thumbnail oluşturamadı: {e}")
+        logger.error(f"❌ Thumbnail oluşturma/kaydetme aşamasında kritik hata: {e}", exc_info=True)
+        raise Exception(f"Canvas oluşturma veya dosyayı kaydetme başarısız oldu: {e}") from e
