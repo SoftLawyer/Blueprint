@@ -47,7 +47,7 @@ class ThumbnailStyle:
     text_stroke_width: int = 4; text_stroke_color: tuple = (0, 0, 0)
 
 STYLE = ThumbnailStyle()
-CHANNEL_NAME = "REVENGE WITH DAVID"
+CHANNEL_NAME = "REVENGE WITH ROBERT"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(message)s", stream=sys.stderr)
 logger = logging.getLogger(__name__)
