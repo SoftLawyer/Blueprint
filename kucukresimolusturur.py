@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (Gemini API Key Uyumlu Versiyon)
+﻿# kucukresimolusturur.py (Gemini API Key Uyumlu ve Font Ayarı Güncellenmiş Versiyon)
 
 from __future__ import annotations
 import json
@@ -26,7 +26,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 
-# --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ (Değiştirilmedi) ---
+# --- SİZİN ORİJİNAL AYARLARINIZ VE SINIFINIZ (İlgili Kısımlar Güncellendi) ---
 @dataclass(frozen=True)
 class ThumbnailStyle:
     width: int = 1280; height: int = 720; bg_primary: tuple = (15, 15, 25)
@@ -36,10 +36,15 @@ class ThumbnailStyle:
     channel_text: tuple = (255, 215, 0); channel_border: tuple = (255, 215, 0)
     font_path: Path = Path("impact.ttf"); base_title_font_size: int = 110
     base_normal_font_size: int = 80; base_revenge_font_size: int = 100
-    base_channel_font_size: int = 32; min_title_font_size: int = 35
-    min_normal_font_size: int = 28; min_revenge_font_size: int = 35
-    min_channel_font_size: int = 24; max_title_font_size: int = 150
-    max_normal_font_size: int = 120; max_revenge_font_size: int = 140
+    base_channel_font_size: int = 32
+    min_title_font_size: int = 35; min_normal_font_size: int = 28
+    min_revenge_font_size: int = 35
+    # GÜNCELLENDİ: Kanal adı yazısının sığması için minimum boyut düşürüldü.
+    min_channel_font_size: int = 18
+    max_title_font_size: int = 150; max_normal_font_size: int = 120
+    max_revenge_font_size: int = 140
+    # YENİ: Kanal adı için maksimum font boyutu eklendi.
+    max_channel_font_size: int = 40
     left_margin: int = 15; top_margin: int = 15; bottom_margin: int = 20
     right_margin: int = 15; base_line_spacing: int = 8; min_line_spacing: int = 3
     max_line_spacing: int = 20; base_section_spacing: int = 15
@@ -83,7 +88,7 @@ def configure_gemini():
         api_key = API_KEYS[current_api_key_index]
         logger.info(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-pro")
+        model = genai.GenerativeModel("gemini-1.5-pro-latest")
         logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -248,7 +253,8 @@ class ThumbnailCanvas:
             avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
         target_width, target_height = 200, 720; avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS); x = self.style.width - target_width; self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
         channel_text = channel_name.upper(); best_channel_font_size = self.style.min_channel_font_size; padding = 15
-        for font_size in range(40, self.style.min_channel_font_size - 1, -2):
+        # GÜNCELLENDİ: Font boyutu arama döngüsü artık stilden gelen max ve min değerleri kullanıyor.
+        for font_size in range(self.style.max_channel_font_size, self.style.min_channel_font_size - 1, -2):
             try:
                 test_font = ImageFont.truetype(str(self.style.font_path), font_size)
                 if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2): best_channel_font_size = font_size; break
@@ -353,6 +359,3 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
     except Exception as e:
         logger.error(f"❌ Thumbnail oluşturma/kaydetme hatası: {e}", exc_info=True)
         raise Exception(f"Thumbnail oluşturamadı: {e}")
-
-        
-        
