@@ -1,233 +1,230 @@
-# videoyapar.py (v3 - Nihai Düzeltilmiş Versiyon - Random Arkaplan)
-
+# worker.py (v10 - Argüman Hatası Düzeltilmiş + Random Arkaplan Video)
 
 import os
-import re
-import random
-import numpy as np
-from moviepy.editor import (
-    VideoFileClip, AudioFileClip, CompositeVideoClip,
-    ImageClip, TextClip, ColorClip, concatenate_audioclips
-)
-from moviepy.audio.AudioClip import AudioArrayClip
+import logging
+import traceback
+import tempfile
+import shutil
+import time
+import requests
+import subprocess
+import random  # Random seçim için eklendi
+from datetime import datetime
 
-# --- AYARLAR ---
-TEST_MODE = False
-PROFIL_FOTO_KONUM_X = 0.5
-PROFIL_FOTO_KONUM_Y = 0.12
-PROFIL_FOTO_BOYUT = 350
-ALTYAZI_KONUM_Y = 0.75
-ALTYAZI_FONT_SIZE = 36
-ALTYAZI_MAX_GENISLIK_ORANI = 0.9
-ISIM_FONT_SIZE = 40
-ALTYAZI_ASAGI_KAYDIR = -1.6
+# Projenizdeki mevcut modülleri import ediyoruz
+import hikayeuretir
+import googleilesesolustur
+import profilfotoolusturur
+import profilfotonunarkasinisiler
+import videoyapar
+import kucukresimolusturur
+
+from google.cloud import storage
+from google.api_core import exceptions
+
+# --- TEMEL AYARLAR ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(module)s.%(funcName)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
+CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
+HATA_BUCKET_ADI = "video-fabrikam-hatalar"
+IDLE_SHUTDOWN_SECONDS = 600 # 10 dakika
 
 # --- Yardımcı Fonksiyonlar ---
-
-def random_arkaplan_video_sec():
-    """Kaynaklar klasöründen random bir arkaplan videosu seçer."""
+def get_metadata(metadata_path):
     try:
-        kaynaklar_klasoru = "kaynaklar"
-        arkaplan_videolar = []
-        
-        # arkaplan1.mp4'ten arkaplan10.mp4'e kadar olan dosyaları kontrol et
-        for i in range(1, 11):
-            video_dosyasi = f"arkaplan{i}.mp4"
-            video_yolu = os.path.join(kaynaklar_klasoru, video_dosyasi)
-            
-            if os.path.exists(video_yolu):
-                arkaplan_videolar.append(video_yolu)
-        
-        if not arkaplan_videolar:
-            raise Exception("❌ HATA: Kaynaklar klasöründe arkaplan videosu bulunamadı!")
-        
-        secilen_video = random.choice(arkaplan_videolar)
-        print(f"🎬 Random seçilen arkaplan videosu: {secilen_video}")
-        return secilen_video
-        
-    except Exception as e:
-        raise Exception(f"❌ HATA: Arkaplan videosu seçilirken bir hata oluştu: {e}")
-
-def kahraman_adini_al(protagonist_profile_text):
-    """Verilen profil metninden kahramanın ilk adını okur."""
-    try:
-        for satir in protagonist_profile_text.splitlines():
-            if satir.strip().lower().startswith("protagonist:"):
-                icerik = satir.split(":", 1)[1].strip()
-                isim = icerik.split(",")[0].strip().split(" ")[0]
-                print(f"✅ Kahraman adı profilden okundu: {isim}")
-                return isim.upper()
-        raise Exception("❌ HATA: Profil metninde 'Protagonist:' satırı bulunamadı.")
-    except Exception as e:
-        raise Exception(f"❌ HATA: Kahraman adı okunurken bir hata oluştu: {e}")
-
-def altyazi_parse(altyazi_dosyasi):
-    """SRT dosyasını parse eder."""
-    try:
-        with open(altyazi_dosyasi, 'r', encoding='utf-8') as f:
-            icerik = f.read().strip()
-        bloklar = re.split(r'\n\s*\n', icerik)
-        altyazilar = []
-        def zaman_to_saniye(zaman_str):
-            saat, dakika, saniye_ms = zaman_str.split(':')
-            saniye, ms = saniye_ms.split(',')
-            return int(saat) * 3600 + int(dakika) * 60 + int(saniye) + int(ms) / 1000
-
-        for blok in bloklar:
-            if not blok.strip(): continue
-            satirlar = blok.strip().split('\n')
-            if len(satirlar) < 2: continue
-            zaman_satiri_index = next((i for i, s in enumerate(satirlar) if '-->' in s), -1)
-            if zaman_satiri_index == -1: continue
-            zaman_match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})', satirlar[zaman_satiri_index])
-            if not zaman_match: continue
-            baslangic = zaman_to_saniye(zaman_match.group(1))
-            bitis = zaman_to_saniye(zaman_match.group(2))
-            metin = '\n'.join(satirlar[zaman_satiri_index+1:]).strip()
-            altyazilar.append({'baslangic': baslangic, 'bitis': bitis, 'metin': metin, 'sure': bitis - baslangic})
-
-        print(f"📝 {len(altyazilar)} altyazı başarıyla parse edildi")
-        return altyazilar
-    except Exception as e:
-        print(f"❌ Altyazı parse hatası: {e}")
-        return []
-
-def altyazi_stili(txt, video_genislik):
-    txt = txt.upper()
-    altyazi_max_genislik = int(video_genislik * ALTYAZI_MAX_GENISLIK_ORANI)
-    return TextClip(
-        txt, fontsize=ALTYAZI_FONT_SIZE, color='white', font='Liberation-Sans-Bold',
-        method='caption', align='center', size=(altyazi_max_genislik, None)
-    )
-
-def altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi):
-    """Her altyazı için ayrı TextClip oluşturur."""
-    altyazi_clips = []
-    for altyazi in altyazilar:
-        if altyazi['baslangic'] >= video_suresi: continue
-        try:
-            clip = altyazi_stili(altyazi['metin'], video_genislik)
-            sure = min(altyazi['sure'], video_suresi - altyazi['baslangic'])
-            clip = clip.set_start(altyazi['baslangic']).set_duration(sure)
-            clip = clip.set_position(('center', altyazi_y_konum), relative=True)
-            altyazi_clips.append(clip)
-        except Exception as e:
-            print(f"⚠️  Altyazı oluşturulamadı: {e}")
-            continue
-    print(f"📝 Toplam {len(altyazi_clips)} altyazı clip'i oluşturuldu")
-    return altyazi_clips
-
-def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
-    gradyan = np.zeros((int(yukseklik), int(genislik), 3), dtype=np.uint8)
-    for x in range(int(genislik)):
-        ratio = x / genislik
-        b = int(10 + ratio * 245)
-        gradyan[:, x] = [0, 0, b]
-    return ImageClip(gradyan, duration=ses_suresi)
-
-# --- ANA VİDEO OLUŞTURMA FONKSİYONU ---
-def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, protagonist_profile, output_dir):
-    print("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
-    
-    # Random arkaplan videosu seç (bg_video_path parametresini göz ardı et)
-    random_bg_video_path = random_arkaplan_video_sec()
-    
-    kahraman_adi = kahraman_adini_al(protagonist_profile)
-    altyazilar = altyazi_parse(srt_path)
-    if not altyazilar: raise Exception("Altyazı dosyası okunamadı veya boş.")
-
-    ses_clip = None
-    arkaplan_video = None
-    final_clip = None
-    
-    try:
-        ses_clip = AudioFileClip(audio_path)
-        altyazi_suresi = altyazilar[-1]['bitis'] if altyazilar else 0
-        video_suresi = max(ses_clip.duration, altyazi_suresi)
-        
-        if TEST_MODE:
-            video_suresi = min(10, video_suresi)
-            ses_clip = ses_clip.subclip(0, video_suresi)
-
-        print(f"🎬 Final video süresi: {video_suresi:.2f} saniye")
-
-        # Random seçilen arkaplan videosunu kullan
-        arkaplan_video = VideoFileClip(random_bg_video_path)
-        if video_suresi > arkaplan_video.duration:
-            arkaplan = arkaplan_video.loop(duration=video_suresi)
-        else:
-            arkaplan = arkaplan_video.set_duration(video_suresi)
-
-        arkaplan = arkaplan.resize(height=720)
-
-        if ses_clip.duration < video_suresi:
-            print(f"🔇 Ses süresi {video_suresi - ses_clip.duration:.2f} saniye uzatılıyor")
-            sessizlik = AudioArrayClip(np.zeros((int((video_suresi - ses_clip.duration) * ses_clip.fps), ses_clip.nchannels)), fps=ses_clip.fps)
-            ses_clip = concatenate_audioclips([ses_clip, sessizlik])
-
-        arkaplan = arkaplan.set_audio(ses_clip)
-        
-        video_genislik, video_yukseklik = arkaplan.size
-        print(f"📐 Video boyutları: {video_genislik}x{video_yukseklik}")
-
-        altyazi_arka_plan_yukseklik = int(video_yukseklik * 0.3)
-        altyazi_arka_plan_y = video_yukseklik - altyazi_arka_plan_yukseklik - 50
-        altyazi_arka_plan = ColorClip(
-            size=(video_genislik, altyazi_arka_plan_yukseklik),
-            color=(0, 0, 0), duration=video_suresi
-        ).set_opacity(0.7).set_position(('center', altyazi_arka_plan_y))
-
-        profil_clip = ImageClip(profile_photo_path, duration=video_suresi, ismask=False).resize(height=PROFIL_FOTO_BOYUT)
-        profil_genislik = profil_clip.w
-        profil_clip = profil_clip.set_position((PROFIL_FOTO_KONUM_X - profil_genislik / (2 * video_genislik), PROFIL_FOTO_KONUM_Y), relative=True)
-        
-        isim_etiket_yukseklik = 60
-        isim_text = TextClip(kahraman_adi, fontsize=ISIM_FONT_SIZE, color='white', font='Liberation-Sans-Bold').set_duration(video_suresi)
-        isim_gradyan = gradyan_arka_plan_olustur(profil_genislik, isim_etiket_yukseklik, video_suresi)
-        isim_etiket = CompositeVideoClip([isim_gradyan, isim_text.set_position('center')])
-        
-        isim_y_relatif = (altyazi_arka_plan_y - isim_etiket_yukseklik) / video_yukseklik
-        isim_etiket = isim_etiket.set_position((PROFIL_FOTO_KONUM_X - isim_etiket.w / (2 * video_genislik), isim_y_relatif), relative=True)
-
-        altyazi_asagi_kaydir_piksel = altyazi_arka_plan_yukseklik * ALTYAZI_ASAGI_KAYDIR / 10
-        altyazi_y_konum = ALTYAZI_KONUM_Y + (altyazi_asagi_kaydir_piksel / video_yukseklik)
-        
-        altyazi_clips = altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_suresi)
-
-        final_clip = CompositeVideoClip([
-            arkaplan,
-            altyazi_arka_plan,
-            profil_clip,
-            isim_etiket,
-            *altyazi_clips
-        ])
-        
-        output_video_path = os.path.join(output_dir, "final_video.mp4")
-        
-        available_threads = os.cpu_count() or 4
-        print(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
-        
-        final_clip.write_videofile(
-            output_video_path,
-            codec="libx264",
-            audio_codec="aac",
-            bitrate="4000k",
-            fps=24,
-            threads=available_threads,
-            preset="slow",
-            logger='bar'
+        response = requests.get(
+            f"http://metadata.google.internal/computeMetadata/v1/{metadata_path}",
+            headers={'Metadata-Flavor': 'Google'}, timeout=5
         )
-        
-        print(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
-        return output_video_path
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Metadata sunucusundan bilgi alınamadı ({metadata_path}): {e}")
+        return None
 
+def shutdown_instance_group():
+    logging.warning("10 dakikadır boşta. Kapatma prosedürü başlatılıyor...")
+    try:
+        zone_full = get_metadata("instance/zone")
+        instance_name = get_metadata("instance/name")
+        if not zone_full or not instance_name:
+            logging.error("Zone veya instance adı alınamadığı için kapatma işlemi iptal edildi.")
+            return
+        zone = zone_full.split('/')[-1]
+        if "fabrika-isci" in instance_name:
+            group_name = "video-fabrikasi-grubu"
+            command = ["gcloud", "compute", "instance-groups", "managed", "resize", group_name, "--size=0", f"--zone={zone}", "--quiet"]
+            subprocess.run(command, check=True)
+            logging.info(f"{group_name} başarıyla kapatıldı.")
     except Exception as e:
-        print(f"❌ Video oluşturulurken kritik bir hata oluştu: {e}")
-        import traceback
-        traceback.print_exc()
-        raise Exception("Video oluşturulamadı.")
-    finally:
-        if ses_clip: ses_clip.close()
-        if arkaplan_video: arkaplan_video.close()
-        if final_clip: final_clip.close()
-        print("🧹 Video kaynakları temizlendi.")
+        logging.error(f"Instance grubunu kapatırken hata oluştu: {e}")
+
+def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_prepend, max_retries=5):
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(filename)
+        for attempt in range(max_retries):
+            try:
+                current_content = blob.download_as_text()
+                current_generation = blob.generation
+            except exceptions.NotFound:
+                current_content = ""
+                current_generation = 0
+            except exceptions.PreconditionFailed:
+                logging.warning(f"'{filename}' için GCS çakışması. Tekrar deneniyor... ({attempt + 1})")
+                time.sleep(1)
+                continue
+            updated_content = content_to_prepend + current_content
+            try:
+                blob.upload_from_string(updated_content, content_type="text/plain; charset=utf-8", if_generation_match=current_generation)
+                logging.info(f"Log GCS'teki merkezi dosyaya eklendi: gs://{bucket_name}/{filename}")
+                return
+            except exceptions.PreconditionFailed:
+                logging.warning(f"'{filename}' için GCS yazma çakışması. Tekrar deneniyor... ({attempt + 1})")
+                time.sleep(1)
+        logging.error(f"'{filename}' dosyasına {max_retries} denemeden sonra yazılamadı.")
+    except Exception as e:
+        logging.error(f"!!! GCS'e HATA LOGU YAZILIRKEN KRİTİK HATA OLUŞTU: {e}")
+
+def log_error_to_gcs(storage_client, bucket_name, title, error_details):
+    instance_name = get_metadata("instance/name") or "unknown-instance"
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_content = (
+        f"Zaman Damgası: {timestamp}\n"
+        f"Makine: {instance_name}\n"
+        f"Başlık: {title or 'N/A'}\n"
+        f"--- HATA DETAYI ---\n{error_details}\n"
+        f"{'='*80}\n\n"
+    )
+    _safe_prepend_to_gcs_file(storage_client, bucket_name, "hatalarblogu.txt", log_content)
+    if title:
+        title_content = f"{timestamp} - {title}\n"
+        _safe_prepend_to_gcs_file(storage_client, bucket_name, "tamamlanamayanbasliklar.txt", title_content)
+
+# Random arkaplan video seçimi için yeni fonksiyon
+def get_random_background_video(storage_client, temp_dir):
+    """
+    Kaynaklar bucket'ından random bir arkaplan videosu seçer ve indirir.
+    arkaplan1.mp4'ten arkaplan10.mp4'e kadar olan dosyalardan birini seçer.
+    """
+    try:
+        kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+        
+        # 1'den 10'a kadar random sayı seç
+        random_number = random.randint(1, 10)
+        selected_video_name = f"arkaplan{random_number}.mp4"
+        
+        # Seçilen videoyu kontrol et
+        bg_video_blob = kaynak_bucket.blob(selected_video_name)
+        if not bg_video_blob.exists():
+            logging.warning(f"'{selected_video_name}' bulunamadı, arkaplan1.mp4 kullanılacak.")
+            selected_video_name = "arkaplan1.mp4"
+            bg_video_blob = kaynak_bucket.blob(selected_video_name)
+        
+        # Videoyu indir
+        bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
+        bg_video_blob.download_to_filename(bg_video_path)
+        
+        logging.info(f"Random arkaplan videosu seçildi: {selected_video_name}")
+        return bg_video_path
+        
+    except Exception as e:
+        logging.error(f"Random arkaplan video seçiminde hata: {e}")
+        # Hata durumunda varsayılan arkaplan1.mp4'ü kullan
+        try:
+            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+            bg_video_blob = kaynak_bucket.blob("arkaplan1.mp4")
+            bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
+            bg_video_blob.download_to_filename(bg_video_path)
+            logging.info("Hata nedeniyle varsayılan arkaplan1.mp4 kullanıldı.")
+            return bg_video_path
+        except Exception as fallback_error:
+            logging.error(f"Varsayılan arkaplan videosu da indirilemedi: {fallback_error}")
+            raise
+
+# --- ANA İŞ AKIŞI ---
+def main_loop():
+    storage_client = storage.Client()
+    idle_start_time = None
+    logging.info("🚀 Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
+    
+    worker_project_id = os.environ.get("GCP_PROJECT") or get_metadata("project/project-id")
+    if not worker_project_id:
+        logging.critical("❌ Makinenin Proje ID'si alınamadı! Worker durduruluyor.")
+        return
+
+    while True:
+        story_title = None
+        temp_dir = None
+        try:
+            (
+                story_content,
+                story_title_from_module,
+                protagonist_profile,
+                api_keys,
+                formatted_text
+            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
+            
+            story_title = story_title_from_module
+
+            if not story_title:
+                if idle_start_time is None:
+                    idle_start_time = time.time()
+                if time.time() - idle_start_time > IDLE_SHUTDOWN_SECONDS:
+                    shutdown_instance_group()
+                    break
+                logging.info(f"İşlenecek yeni konu bulunamadı. Kapanmaya kalan süre: {int(IDLE_SHUTDOWN_SECONDS - (time.time() - idle_start_time))} saniye.")
+                time.sleep(60)
+                continue
+            
+            idle_start_time = None
+            temp_dir = tempfile.mkdtemp(dir="/tmp")
+            
+            formatted_story_path = os.path.join(temp_dir, "hikaye.txt")
+            with open(formatted_story_path, "w", encoding="utf-8") as f:
+                 f.write(formatted_text)
+
+            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, api_keys)
+            original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
+            cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
+            
+            # DÜZELTME: Artık 'api_keys' yerine 'worker_project_id' geçiriliyor.
+            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, worker_project_id)
+            
+            # DEĞİŞİKLİK: Random arkaplan video seçimi
+            bg_video_path = get_random_background_video(storage_client, temp_dir)
+            
+            final_video_path = videoyapar.run_video_creation(bg_video_path, audio_file_path, srt_file_path, cleaned_photo_path, protagonist_profile, temp_dir)
+            
+            cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
+            safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
+            files_to_upload = {
+                "nihai_video.mp4": final_video_path, "kucuk_resim.png": final_thumbnail_path,
+                "altyazi.srt": srt_file_path, "ses.wav": audio_file_path,
+                "hikaye.txt": formatted_story_path, "profil_foto_temiz.png": cleaned_photo_path,
+                "profil_foto_orijinal.png": original_photo_path
+            }
+            for filename, local_path in files_to_upload.items():
+                if os.path.exists(local_path):
+                    blob = cikti_bucket.blob(f"{safe_folder_name}/{filename}")
+                    blob.upload_from_filename(local_path)
+            
+            logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉🎉")
+
+        except Exception as e:
+            error_details = traceback.format_exc()
+            logging.error(f"❌ HATA OLUŞTU: '{story_title}' başlıklı video üretilemedi. ❌")
+            log_error_to_gcs(storage_client, HATA_BUCKET_ADI, story_title, error_details)
+        finally:
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            logging.info("-" * 80)
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main_loop()
