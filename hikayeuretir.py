@@ -12,7 +12,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 project_id = "videofabrikam"
-TEST_MODE = False # Tam hikaye üretimi için bu False olmalıdır
+TEST_MODE = True # Tam hikaye üretimi için bu False olmalıdır
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 
