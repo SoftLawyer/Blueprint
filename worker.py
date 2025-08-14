@@ -1,4 +1,4 @@
-# worker.py (v10 - Merkezi Hata Kaydı)
+# worker.py (v11 - Gemini API Key Uyumlu)
 
 import os
 import logging
@@ -31,7 +31,6 @@ logging.basicConfig(
 
 KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
 CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
-# YENİ: Hatalar için ayrı bir bucket adı
 HATA_BUCKET_ADI = "video-fabrikam-hatalar"
 IDLE_SHUTDOWN_SECONDS = 300 # 5 dakika
 
@@ -49,7 +48,7 @@ def get_metadata(metadata_path):
         return None
 
 def shutdown_instance_group():
-    logging.warning("10 dakikadır boşta. Kapatma prosedürü başlatılıyor...")
+    logging.warning("Boşta kalma süresi aşıldı. Kapatma prosedürü başlatılıyor...")
     try:
         zone_full = get_metadata("instance/zone")
         instance_name = get_metadata("instance/name")
@@ -65,7 +64,6 @@ def shutdown_instance_group():
     except Exception as e:
         logging.error(f"Instance grubunu kapatırken hata oluştu: {e}")
 
-# GÜNCELLENMİŞ: Merkezi ve tek dosyaya yazan hata kaydı fonksiyonu
 def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_prepend, max_retries=5):
     """
     Bir GCS dosyasının başına, çakışmaları önleyerek, güvenli bir şekilde yeni içerik ekler.
@@ -76,11 +74,9 @@ def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_
         
         for attempt in range(max_retries):
             try:
-                # 1. Dosyanın mevcut halini ve "generation" numarasını oku
                 current_content = blob.download_as_text()
                 current_generation = blob.generation
             except exceptions.NotFound:
-                # Dosya yoksa, boş olarak kabul et
                 current_content = ""
                 current_generation = 0
             except exceptions.PreconditionFailed:
@@ -88,14 +84,12 @@ def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_
                 time.sleep(1)
                 continue
 
-            # 2. Yeni içeriği eskisinin başına ekle
             updated_content = content_to_prepend + current_content
             
-            # 3. Dosyayı, sadece bizim okuduğumuz versiyon ise güncellemeye izin ver
             try:
                 blob.upload_from_string(updated_content, content_type="text/plain; charset=utf-8", if_generation_match=current_generation)
                 logging.info(f"Log GCS'teki merkezi dosyaya eklendi: gs://{bucket_name}/{filename}")
-                return # Başarılı, döngüden çık
+                return
             except exceptions.PreconditionFailed:
                 logging.warning(f"'{filename}' için GCS yazma çakışması. Tekrar deneniyor... ({attempt + 1})")
                 time.sleep(1)
@@ -110,7 +104,6 @@ def log_error_to_gcs(storage_client, bucket_name, title, error_details):
     instance_name = get_metadata("instance/name") or "unknown-instance"
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    # Detaylı hata logunu oluştur
     log_content = (
         f"Zaman Damgası: {timestamp}\n"
         f"Makine: {instance_name}\n"
@@ -120,7 +113,6 @@ def log_error_to_gcs(storage_client, bucket_name, title, error_details):
     )
     _safe_prepend_to_gcs_file(storage_client, bucket_name, "hatalarblogu.txt", log_content)
 
-    # Sadece tamamlanamayan başlığı kaydet
     if title:
         title_content = f"{timestamp} - {title}\n"
         _safe_prepend_to_gcs_file(storage_client, bucket_name, "tamamlanamayanbasliklar.txt", title_content)
@@ -131,21 +123,18 @@ def main_loop():
     idle_start_time = None
     logging.info("🚀 Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
     
-    worker_project_id = os.environ.get("GCP_PROJECT") or get_metadata("project/project-id")
-    if not worker_project_id:
-        logging.critical("❌ Makinenin Proje ID'si alınamadı! Worker durduruluyor.")
-        return
-
     while True:
         story_title = None
         temp_dir = None
         try:
+            # GÜNCELLENDİ: Fonksiyon çağrısı 2 argüman alacak şekilde düzeltildi
             (
                 story_content,
                 story_title_from_module,
                 protagonist_profile,
+                api_keys, # API anahtarlarını tekrar alıyoruz
                 formatted_text
-            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI, worker_project_id)
+            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
             
             story_title = story_title_from_module
 
@@ -166,10 +155,12 @@ def main_loop():
             with open(formatted_story_path, "w", encoding="utf-8") as f:
                  f.write(formatted_text)
 
-            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, worker_project_id)
+            # GÜNCELLENDİ: Diğer fonksiyon çağrıları da API anahtarlarını kullanacak şekilde düzeltildi
+            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, api_keys)
             original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
             cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
-            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, worker_project_id)
+            
+            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, api_keys)
             
             kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
             
@@ -201,12 +192,11 @@ def main_loop():
                     blob = cikti_bucket.blob(f"{safe_folder_name}/{filename}")
                     blob.upload_from_filename(local_path)
             
-            logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉🎉")
+            logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉�")
 
         except Exception as e:
             error_details = traceback.format_exc()
             logging.error(f"❌ HATA OLUŞTU: '{story_title}' başlıklı video üretilemedi. ❌")
-            # GÜNCELLENDİ: Hataları yeni bucket'a kaydet
             log_error_to_gcs(storage_client, HATA_BUCKET_ADI, story_title, error_details)
         finally:
             if temp_dir and os.path.exists(temp_dir):
