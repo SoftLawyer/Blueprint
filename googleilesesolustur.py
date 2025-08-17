@@ -217,8 +217,8 @@ def process_single_chunk(chunk, api_key, chunk_id, recursion_depth=0):
     url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
     data = {
         "input": {"text": chunk},
-        "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Algenib"},
-        "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 0.99, "sampleRateHertz": SAMPLE_RATE}
+        "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Iapetus"},
+        "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": 1.0, "sampleRateHertz": SAMPLE_RATE}
     }
     
     backoff_time = INITIAL_BACKOFF_SECONDS
