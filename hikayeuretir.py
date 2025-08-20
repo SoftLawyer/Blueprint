@@ -12,7 +12,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 project_id = "videofabrikam"
-TEST_MODE = False # Tam hikaye üretimi için bu False olmalıdır
+TEST_MODE = True # Tam hikaye üretimi için bu False olmalıdır
 
 # --- Bulut Uyumlu Yardımcı Fonksiyonlar ---
 
@@ -209,22 +209,22 @@ class YouTubeRevengeStoryGenerator:
 
 Create a protagonist profile in this EXACT format:
 
-Protagonist: [FICTIONAL First Name Last Name], [age 32-58]
+Protagonist: [FICTIONAL First Name Last Name], [age 32-40]
 Company: [FICTIONAL Company Name] ([industry type])
 Location: [US City]
 Crisis: [Brief description of the main crisis/conflict]
 
 Requirements:
 - ALL names must be completely FICTIONAL
-- The Protagonist must only be an American male
+- The Protagonist must only be an American female
 - Choose appropriate industry based on the title
-- Age between 32-58
+- Age between 32-40
 - US location that fits the story
 - Crisis should match the title's theme
 - Keep it concise - one line each
 
 Example format:
-Protagonist: George Chen, 45
+Protagonist: Jennifer Chen, 35
 Company: TechFlow Systems (software)
 Location: Austin
 Crisis: Data breach affecting major clients
