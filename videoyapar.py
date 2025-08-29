@@ -1,8 +1,10 @@
-﻿# videoyapar.py (v3 - Nihai Düzeltilmiş Versiyon)
+﻿# videoyapar.py (v4 - Sabit "LEO" İsim Etiketi)
 
 import os
 import re
 import numpy as np
+import logging
+import traceback
 from moviepy.editor import (
     VideoFileClip, AudioFileClip, CompositeVideoClip,
     ImageClip, TextClip, ColorClip, concatenate_audioclips
@@ -21,19 +23,6 @@ ISIM_FONT_SIZE = 40
 ALTYAZI_ASAGI_KAYDIR = -1.6
 
 # --- Yardımcı Fonksiyonlar ---
-
-def kahraman_adini_al(protagonist_profile_text):
-    """Verilen profil metninden kahramanın ilk adını okur."""
-    try:
-        for satir in protagonist_profile_text.splitlines():
-            if satir.strip().lower().startswith("protagonist:"):
-                icerik = satir.split(":", 1)[1].strip()
-                isim = icerik.split(",")[0].strip().split(" ")[0]
-                print(f"✅ Kahraman adı profilden okundu: {isim}")
-                return isim.upper()
-        raise Exception("❌ HATA: Profil metninde 'Protagonist:' satırı bulunamadı.")
-    except Exception as e:
-        raise Exception(f"❌ HATA: Kahraman adı okunurken bir hata oluştu: {e}")
 
 def altyazi_parse(altyazi_dosyasi):
     """SRT dosyasını parse eder."""
@@ -58,10 +47,10 @@ def altyazi_parse(altyazi_dosyasi):
             bitis = zaman_to_saniye(zaman_match.group(2))
             metin = '\n'.join(satirlar[zaman_satiri_index+1:]).strip()
             altyazilar.append({'baslangic': baslangic, 'bitis': bitis, 'metin': metin, 'sure': bitis - baslangic})
-        print(f"📝 {len(altyazilar)} altyazı başarıyla parse edildi")
+        logging.info(f"📝 {len(altyazilar)} altyazı başarıyla parse edildi")
         return altyazilar
     except Exception as e:
-        print(f"❌ Altyazı parse hatası: {e}")
+        logging.error(f"❌ Altyazı parse hatası: {e}")
         return []
 
 def altyazi_stili(txt, video_genislik):
@@ -84,9 +73,9 @@ def altyazi_clipleri_olustur(altyazilar, video_genislik, altyazi_y_konum, video_
             clip = clip.set_position(('center', altyazi_y_konum), relative=True)
             altyazi_clips.append(clip)
         except Exception as e:
-            print(f"⚠️  Altyazı oluşturulamadı: {e}")
+            logging.warning(f"⚠️  Altyazı oluşturulamadı: {e}")
             continue
-    print(f"📝 Toplam {len(altyazi_clips)} altyazı clip'i oluşturuldu")
+    logging.info(f"📝 Toplam {len(altyazi_clips)} altyazı clip'i oluşturuldu")
     return altyazi_clips
 
 def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
@@ -98,10 +87,13 @@ def gradyan_arka_plan_olustur(genislik, yukseklik, ses_suresi):
     return ImageClip(gradyan, duration=ses_suresi)
 
 # --- ANA VİDEO OLUŞTURMA FONKSİYONU ---
-def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, protagonist_profile, output_dir):
-    print("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
+def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, output_dir):
+    logging.info("--- Video Birleştirme Modülü Başlatıldı (720p) ---")
     
-    kahraman_adi = kahraman_adini_al(protagonist_profile)
+    # --- GÜNCELLEME: İsim artık sabit olarak "LEO" ---
+    kahraman_adi = "LEO"
+    logging.info(f"✅ Karakter ismi sabit olarak ayarlandı: {kahraman_adi}")
+
     altyazilar = altyazi_parse(srt_path)
     if not altyazilar: raise Exception("Altyazı dosyası okunamadı veya boş.")
 
@@ -118,7 +110,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             video_suresi = min(10, video_suresi)
             ses_clip = ses_clip.subclip(0, video_suresi)
 
-        print(f"🎬 Final video süresi: {video_suresi:.2f} saniye")
+        logging.info(f"🎬 Final video süresi: {video_suresi:.2f} saniye")
 
         arkaplan_video = VideoFileClip(bg_video_path)
         if video_suresi > arkaplan_video.duration:
@@ -129,14 +121,14 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         arkaplan = arkaplan.resize(height=720)
 
         if ses_clip.duration < video_suresi:
-            print(f"🔇 Ses süresi {video_suresi - ses_clip.duration:.2f} saniye uzatılıyor")
+            logging.info(f"🔇 Ses süresi {video_suresi - ses_clip.duration:.2f} saniye uzatılıyor")
             sessizlik = AudioArrayClip(np.zeros((int((video_suresi - ses_clip.duration) * ses_clip.fps), ses_clip.nchannels)), fps=ses_clip.fps)
             ses_clip = concatenate_audioclips([ses_clip, sessizlik])
 
         arkaplan = arkaplan.set_audio(ses_clip)
         
         video_genislik, video_yukseklik = arkaplan.size
-        print(f"📐 Video boyutları: {video_genislik}x{video_yukseklik}")
+        logging.info(f"📐 Video boyutları: {video_genislik}x{video_yukseklik}")
 
         altyazi_arka_plan_yukseklik = int(video_yukseklik * 0.3)
         altyazi_arka_plan_y = video_yukseklik - altyazi_arka_plan_yukseklik - 50
@@ -145,7 +137,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             color=(0, 0, 0), duration=video_suresi
         ).set_opacity(0.7).set_position(('center', altyazi_arka_plan_y))
 
-        profil_clip = ImageClip(profile_photo_path, duration=video_suresi, ismask=False).resize(height=PROFIL_FOTO_BOYUT)
+        profil_clip = ImageClip(profile_photo_path, duration=video_suresi).resize(height=PROFIL_FOTO_BOYUT)
         profil_genislik = profil_clip.w
         profil_clip = profil_clip.set_position((PROFIL_FOTO_KONUM_X - profil_genislik / (2 * video_genislik), PROFIL_FOTO_KONUM_Y), relative=True)
         
@@ -173,7 +165,7 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
         output_video_path = os.path.join(output_dir, "final_video.mp4")
         
         available_threads = os.cpu_count() or 4
-        print(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
+        logging.info(f"⚙️ Video render işlemi için {available_threads} CPU çekirdeği kullanılacak.")
         
         final_clip.write_videofile(
             output_video_path,
@@ -186,16 +178,15 @@ def run_video_creation(bg_video_path, audio_path, srt_path, profile_photo_path, 
             logger='bar'
         )
         
-        print(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
+        logging.info(f"✅ Video başarıyla oluşturuldu (720p): {output_video_path}")
         return output_video_path
 
     except Exception as e:
-        print(f"❌ Video oluşturulurken kritik bir hata oluştu: {e}")
-        import traceback
+        logging.error(f"❌ Video oluşturulurken kritik bir hata oluştu: {e}")
         traceback.print_exc()
         raise Exception("Video oluşturulamadı.")
     finally:
         if ses_clip: ses_clip.close()
         if arkaplan_video: arkaplan_video.close()
         if final_clip: final_clip.close()
-        print("🧹 Video kaynakları temizlendi.")
+        logging.info("🧹 Video kaynakları temizlendi.")
