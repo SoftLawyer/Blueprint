@@ -1,49 +1,58 @@
-# icerik_uretici_local_v3.py
+# icerik_uretici_local_v3.py (Secret Manager Entegrasyonlu)
 
+from __future__ import annotations
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
+from google.cloud import secretmanager
 import os
 import time
 import re
 import random
+import logging
+import sys
+
+# --- Logging Ayarları ---
+logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(asctime)s | %(message)s", stream=sys.stderr, datefmt="%Y-%m-%d %H:%M:%S")
+logger = logging.getLogger(__name__)
 
 # --- Global Ayarlar ---
 API_KEYS = []
 current_api_key_index = 0
 model = None
 
-# --- Yerel Dosya Entegrasyon Fonksiyonları ---
-
-def load_api_keys_from_local_file(filename="apikeyler.txt"):
-    """API anahtarlarını kod ile aynı dizindeki 'apikeyler.txt' dosyasından yükler."""
+# --- YENİ: Secret Manager Entegrasyon Fonksiyonları ---
+def load_api_keys_from_secret_manager(project_id: str) -> bool:
+    """API anahtarlarını Secret Manager'dan yükler."""
     global API_KEYS
     if API_KEYS: return True
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        file_path = os.path.join(script_dir, filename)
-        with open(file_path, 'r', encoding='utf-8') as f:
-            API_KEYS = [line.strip() for line in f if line.strip()]
+        logger.info("🔄 Gemini API anahtarları Secret Manager'dan okunuyor...")
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{project_id}/secrets/gemini-api-anahtarlari/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        payload = response.payload.data.decode("UTF-8")
+        API_KEYS = [line.strip() for line in payload.splitlines() if line.strip()]
         if not API_KEYS:
-            print(f"❌ '{filename}' dosyasında API anahtarı bulunamadı veya dosya boş.")
+            logger.error("❌ Secret Manager'da 'gemini-api-anahtarlari' secret'ı içinde API anahtarı bulunamadı.")
             return False
-        print(f"🔑 {len(API_KEYS)} API anahtarı '{filename}' dosyasından başarıyla yüklendi.")
+        logger.info(f"🔑 {len(API_KEYS)} Gemini API anahtarı başarıyla yüklendi.")
         return True
-    except FileNotFoundError:
-        print(f"❌ HATA: '{filename}' dosyası bulunamadı. Lütfen kod ile aynı dizine oluşturun.")
+    except google_exceptions.NotFound:
+        logger.error(f"❌ Secret Manager'da 'gemini-api-anahtarlari' secret'ı bulunamadı (Proje: {project_id}).")
         return False
     except Exception as e:
-        print(f"❌ API anahtar dosyasını okurken hata: {e}")
+        logger.error(f"❌ Secret Manager'dan anahtar okunurken kritik hata oluştu: {e}")
         return False
 
 def configure_gemini():
     """Sıradaki API anahtarı ile Gemini modelini yapılandırır."""
     global current_api_key_index, model
     if not API_KEYS or current_api_key_index >= len(API_KEYS):
-        print("❌ Kullanılabilir API anahtarı kalmadı.")
+        logger.error("❌ Kullanılabilir API anahtarı kalmadı.")
         return None
     try:
         api_key = API_KEYS[current_api_key_index]
-        print(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
+        logger.info(f"🔄 API anahtarı {current_api_key_index + 1} deneniyor...")
         genai.configure(api_key=api_key)
         generation_config = {
             "temperature": 0.8,
@@ -55,10 +64,10 @@ def configure_gemini():
             model_name="gemini-2.5-pro",
             generation_config=generation_config
         )
-        print(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
+        logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
-        print(f"❌ API anahtarı {current_api_key_index + 1} ile hata: {e}")
+        logger.error(f"❌ API anahtarı {current_api_key_index + 1} ile hata: {e}")
         current_api_key_index += 1
         return configure_gemini()
 
@@ -73,11 +82,11 @@ def generate_with_failover(prompt):
             response = model.generate_content(prompt)
             return response
         except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied) as e:
-            print(f"⚠️ API anahtarı {current_api_key_index + 1} kotaya takıldı veya izin sorunu. Değiştiriliyor...")
+            logger.warning(f"⚠️ API anahtarı {current_api_key_index + 1} kotaya takıldı veya izin sorunu. Değiştiriliyor...")
             current_api_key_index += 1
             model = None
         except Exception as e:
-            print(f"❌ Beklenmedik API hatası: {e}")
+            logger.error(f"❌ Beklenmedik API hatası: {e}")
             current_api_key_index += 1
             model = None
     return None
@@ -170,37 +179,28 @@ class CreatorsBlueprintGenerator:
         for pattern in power_indicators:
             matches = len(re.findall(pattern, hook_text, re.IGNORECASE))
             if matches > 0:
-                # İlk 4 pattern (sayısal veriler) için ekstra puan
                 if pattern in power_indicators[:4]:
-                    score += matches * 2  # Çift puan
+                    score += matches * 2
                 else:
                     score += matches
         
-        # Özel bonus puanlar
         bonus_score = 0
         
-        # Güçlü açılış cümleleri bonusu
-        strong_openings = [
-            'every day', 'stop', 'the most expensive', 'here\'s the truth', 
-            'delay', 'accept', 'chip away', 'left on the table'
-        ]
+        strong_openings = ['every day', 'stop', 'the most expensive', 'here\'s the truth', 'delay', 'accept', 'chip away', 'left on the table']
         for opening in strong_openings:
             if opening.lower() in hook_text.lower():
                 bonus_score += 2
                 break
         
-        # Promise/çözüm bonusu
         promises = ['let\'s', 'I\'ll show', 'this video', 'we\'ll', 'together']
         for promise in promises:
             if promise.lower() in hook_text.lower():
                 bonus_score += 1
                 break
         
-        # Spesifik rakam bonusu (büyük etkili)
-        if re.search(r'\$\d{2,3},\d{3}', hook_text):  # $10,000+ formatı
+        if re.search(r'\$\d{2,3},\d{3}', hook_text):
             bonus_score += 3
         
-        # Zaman baskısı bonusu
         time_pressure = ['delay', 'another year', 'every day', 'by year\'s end']
         for pressure in time_pressure:
             if pressure.lower() in hook_text.lower():
@@ -210,23 +210,23 @@ class CreatorsBlueprintGenerator:
         total_score = score + bonus_score
         
         hook_power = "🔥 KILLER" if total_score >= 12 else "⚡ STRONG" if total_score >= 8 else "💪 DECENT" if total_score >= 5 else "⚠️ WEAK"
-        print(f"  📊 Hook Power Analysis: {hook_power} (Score: {total_score}/20+)")
-        print(f"      Base indicators: {score}, Bonus points: {bonus_score}")
+        logger.info(f"  📊 Hook Power Analysis: {hook_power} (Score: {total_score}/20+)")
+        logger.info(f"      Base indicators: {score}, Bonus points: {bonus_score}")
         
-        # Eğer hook zayıfsa, yeniden üretim öner
         if total_score < 8:
-            print(f"  🔄 Hook power below threshold ({total_score}/20+). Regenerating...")
+            logger.warning(f"  🔄 Hook power below threshold ({total_score}/20+). Regenerating...")
             return False
         
         return True
 
     def generate_killer_hook(self, video_title, max_attempts=3):
         """Güçlü bir hook üretir, gerekirse birkaç deneme yapar"""
+        hook_text = ""
         for attempt in range(max_attempts):
-            print(f"  🎯 Hook generation attempt {attempt + 1}/{max_attempts}")
+            logger.info(f"  🎯 Hook generation attempt {attempt + 1}/{max_attempts}")
             
             selected_hook = self.get_random_hook_type()
-            print(f"  🎲 Selected Hook Type: {selected_hook['name']}")
+            logger.info(f"  🎲 Selected Hook Type: {selected_hook['name']}")
             
             prompt = f"""
 You are an expert financial educator for a YouTube channel called 'The Creator's Blueprint'.
@@ -268,38 +268,38 @@ Write ONLY the hook text (no titles, no explanations). Make it KILLER:
             if response and response.parts:
                 hook_text = response.text.strip()
                 if self.validate_hook_power(hook_text):
-                    print(f"  ✅ KILLER hook generated on attempt {attempt + 1}!")
+                    logger.info(f"  ✅ KILLER hook generated on attempt {attempt + 1}!")
                     return hook_text
                 else:
-                    print(f"  ⚠️ Hook attempt {attempt + 1} didn't meet power threshold, trying again...")
+                    logger.warning(f"  ⚠️ Hook attempt {attempt + 1} didn't meet power threshold, trying again...")
                     time.sleep(1)
             else:
-                print(f"  ❌ Hook attempt {attempt + 1} failed to generate")
+                logger.error(f"  ❌ Hook attempt {attempt + 1} failed to generate")
         
-        print(f"  ⚠️ Using best available hook after {max_attempts} attempts")
-        return hook_text if 'hook_text' in locals() else None
+        logger.warning(f"  ⚠️ Using best available hook after {max_attempts} attempts")
+        return hook_text if hook_text else None
 
     def get_and_update_next_title(self, source_filename="creator_blueprint_titles.txt"):
         """Yerel başlık listesinden sıradaki başlığı alır ve listeyi günceller."""
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = os.path.join(script_dir, source_filename)
+            # Docker içindeki çalışma dizini /app olduğu için doğrudan dosya adını kullanabiliriz.
+            file_path = os.path.join("/app", source_filename)
+            if not os.path.exists(file_path):
+                 logger.error(f"❌ HATA: Başlık dosyası bulunamadı: {file_path}")
+                 return None
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = [line.strip() for line in f if line.strip()]
             if not lines:
-                print("✅ Başlık listesi tamamlandı.")
+                logger.info("✅ Başlık listesi tamamlandı.")
                 return None
             title_to_process = lines[0]
             remaining_titles = lines[1:]
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write("\n".join(remaining_titles))
-            print(f"🔹 '{title_to_process}' başlığı yerel dosyadan alındı. Kalan başlık sayısı: {len(remaining_titles)}")
+            logger.info(f"🔹 '{title_to_process}' başlığı yerel dosyadan alındı. Kalan başlık sayısı: {len(remaining_titles)}")
             return title_to_process
-        except FileNotFoundError:
-            print(f"❌ HATA: '{source_filename}' dosyası bulunamadı.")
-            return None
         except Exception as e:
-            print(f"❌ Yerel başlık dosyasını okurken/yazarken hata: {e}")
+            logger.error(f"❌ Yerel başlık dosyasını okurken/yazarken hata: {e}")
             return None
 
     def generate_script_by_section(self, video_title):
@@ -307,8 +307,8 @@ Write ONLY the hook text (no titles, no explanations). Make it KILLER:
         Verilen başlığa göre, belirlenen yapıya uygun olarak bölüm bölüm video metni üretir.
         Hook bölümü için özel killer hook üretimi yapar.
         """
-        print(f"\nSCRIPT GENERATION STARTED FOR: '{video_title}'")
-        print(f"Targeting {len(self.script_structure)} sections, ~{self.total_target_words} words, for an 8-12 minute video.")
+        logger.info(f"\nSCRIPT GENERATION STARTED FOR: '{video_title}'")
+        logger.info(f"Targeting {len(self.script_structure)} sections, ~{self.total_target_words} words, for an 8-12 minute video.")
 
         full_script_parts = []
         script_so_far = ""
@@ -318,16 +318,14 @@ Write ONLY the hook text (no titles, no explanations). Make it KILLER:
             section_words = section_info["words"]
             section_task = section_info["task"]
             
-            print(f"\n  ➡️  Generating Part {i}/{len(self.script_structure)}: '{section_name}' (~{section_words} words)...")
+            logger.info(f"\n  ➡️  Generating Part {i}/{len(self.script_structure)}: '{section_name}' (~{section_words} words)...")
 
-            # Hook için özel killer hook üretimi
             if section_name == "The Hook":
                 section_text = self.generate_killer_hook(video_title)
                 if not section_text:
-                    print(f"  ❌  Hook generation completely failed! Aborting script generation.")
+                    logger.critical(f"  ❌  Hook generation completely failed! Aborting script generation.")
                     return None
             else:
-                # Normal prompt for other sections
                 prompt = f"""
 You are an expert financial educator for a YouTube channel called 'The Creator's Blueprint'.
 Your host persona is "Leo", a calm, empathetic, and knowledgeable guide.
@@ -366,15 +364,15 @@ Your entire response must be ONLY the text for the "{section_name}" section. Beg
                         section_text = response.text.strip()
                     else:
                         finish_reason = "UNKNOWN"
-                        if response and response.candidates and response.candidates[0].finish_reason:
+                        if response and hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'finish_reason'):
                             finish_reason = response.candidates[0].finish_reason.name
-                        print(f"  ❌  Part {i} generation blocked or returned empty. Finish Reason: {finish_reason}")
+                        logger.error(f"  ❌  Part {i} generation blocked or returned empty. Finish Reason: {finish_reason}")
                         return None
                 except ValueError:
                     finish_reason = "SAFETY_BLOCK"
-                    if response and response.candidates and response.candidates[0].finish_reason:
+                    if response and hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'finish_reason'):
                         finish_reason = response.candidates[0].finish_reason.name
-                    print(f"  ❌  Part {i} generation blocked by safety filters. Finish Reason: {finish_reason}")
+                    logger.error(f"  ❌  Part {i} generation blocked by safety filters. Finish Reason: {finish_reason}")
                     return None
 
             if section_text is not None:
@@ -382,19 +380,19 @@ Your entire response must be ONLY the text for the "{section_name}" section. Beg
                 script_so_far += section_text + "\n\n"
                 
                 word_count = len(section_text.split())
-                print(f"  ✅  Part {i} completed ({word_count} words).")
+                logger.info(f"  ✅  Part {i} completed ({word_count} words).")
                 time.sleep(2)
             else:
-                print(f"  ❌  Part {i} could not be generated! Aborting script generation for this title.")
+                logger.error(f"  ❌  Part {i} could not be generated! Aborting script generation for this title.")
                 return None
         
         final_script = "\n\n---\n\n".join(full_script_parts)
         total_words = len(final_script.split())
         estimated_minutes = total_words / 150
         
-        print("\n✅ SCRIPT GENERATION COMPLETED!")
-        print(f"  📊 Total Words: {total_words}")
-        print(f"  ⏱️ Estimated Narration Time: {estimated_minutes:.1f} minutes")
+        logger.info("\n✅ SCRIPT GENERATION COMPLETED!")
+        logger.info(f"  📊 Total Words: {total_words}")
+        logger.info(f"  ⏱️ Estimated Narration Time: {estimated_minutes:.1f} minutes")
         
         return final_script
 
@@ -417,93 +415,37 @@ Your entire response must be ONLY the text for the "{section_name}" section. Beg
 
 # --- Worker İçin Özel Fonksiyon ---
 
-def run_script_generation_process_for_worker():
+def run_script_generation_process_for_worker(project_id: str):
     """
     Worker.py tarafından çağrılan özel fonksiyon.
-    Tek bir video için metin üretir ve worker'ın temp dizinine kaydeder.
+    Tek bir video için metin üretir.
     
     Returns:
         tuple: (formatted_text, story_title) - Başarılıysa metin ve başlık, başarısızsa (None, None)
     """
-    print("--- 'The Creator's Blueprint' İçerik Üretim Modülü Worker İçin Başlatıldı (v3 - Killer Hook Generator) ---")
+    logger.info("--- 'The Creator's Blueprint' İçerik Üretim Modülü Worker İçin Başlatıldı (Secret Manager Uyumlu) ---")
     
-    if not load_api_keys_from_local_file():
-        print("❌ API anahtarları yüklenemedi.")
+    if not load_api_keys_from_secret_manager(project_id):
+        logger.critical("❌ API anahtarları Secret Manager'dan yüklenemedi.")
         return None, None
 
     generator = CreatorsBlueprintGenerator()
     
     video_title = generator.get_and_update_next_title()
     if not video_title:
-        print("✅ Tüm başlıklar işlendi. Yeni konu bulunamadı.")
+        logger.info("✅ Tüm başlıklar işlendi. Yeni konu bulunamadı.")
         return None, None
 
     script_content = generator.generate_script_by_section(video_title)
     if not script_content:
-        print(f"\n❌ FAILED: Script for '{video_title}' could not be generated due to an API block or error.")
+        logger.error(f"\n❌ BAŞARISIZ: '{video_title}' için metin üretilemedi.")
         return None, None
 
     formatted_script = generator.format_script_for_saving(script_content, video_title)
     if not formatted_script:
-        print("❌ Metin formatlanamadı.")
+        logger.error("❌ Metin formatlanamadı.")
         return None, None
 
-    print(f"\n✅ İçerik üretimi başarıyla tamamlandı: '{video_title}'")
+    logger.info(f"\n✅ İçerik üretimi başarıyla tamamlandı: '{video_title}'")
     return formatted_script, video_title
 
-# --- Ana İş Akışı Fonksiyonu (Bağımsız Çalıştırma İçin) ---
-
-def run_script_generation_process():
-    """
-    Tüm içerik üretim sürecini yönetir.
-    """
-    print("--- 'The Creator's Blueprint' İçerik Üretim Modülü Başlatıldı (v3 - Killer Hook Generator) ---")
-    
-    if not load_api_keys_from_local_file():
-        raise Exception("API anahtarları yüklenemedi.")
-
-    generator = CreatorsBlueprintGenerator()
-    
-    video_title = generator.get_and_update_next_title()
-    if not video_title:
-        print("🏁 Tüm başlıklar işlendi. Program sonlandırılıyor.")
-        return
-
-    script_content = generator.generate_script_by_section(video_title)
-    if not script_content:
-        print(f"\n❌ FAILED: Script for '{video_title}' could not be generated due to an API block or error. Moving to the next title if available.")
-        return
-
-    formatted_script = generator.format_script_for_saving(script_content, video_title)
-    if not formatted_script:
-        raise Exception("Metin formatlanamadı.")
-
-    try:
-        output_dir = "üretilen_metinler"
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            print(f"📂 '{output_dir}' klasörü oluşturuldu.")
-        safe_filename = re.sub(r'[^a-zA-Z0_9\s]', '', video_title).replace(' ', '_')
-        output_filepath = os.path.join(output_dir, f"{safe_filename}.txt")
-        with open(output_filepath, 'w', encoding='utf-8') as f:
-            f.write(formatted_script)
-        print(f"\n💾 Üretilen metin başarıyla kaydedildi: {output_filepath}")
-    except Exception as e:
-        print(f"❌ Üretilen metin dosyaya kaydedilirken hata oluştu: {e}")
-
-# --- Script'i Doğrudan Çalıştırmak İçin ---
-if __name__ == '__main__':
-    print("------------------------------------------------------------------")
-    print("  'The Creator's Blueprint' Yerel Metin Üreticiye Hoş Geldiniz (v3)")
-    print("  🔥 KILLER HOOK GENERATOR WITH POWER VALIDATION 🔥")
-    print("------------------------------------------------------------------")
-    print("Başlamadan önce emin olun:")
-    print("  1. 'apikeyler.txt' dosyası bu script ile aynı dizinde.")
-    print("  2. 'creator_blueprint_titles.txt' dosyası bu script ile aynı dizinde.")
-    print("------------------------------------------------------------------\n")
-    
-    try:
-        run_script_generation_process()
-    except Exception as e:
-        print(f"\n--- PROGRAMDA BİR HATA OLUŞTU ---")
-        print(e)

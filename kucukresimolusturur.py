@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (v6 - The Creator's Blueprint - Tamamen Bulut Uyumlu)
+﻿# kucukresimolusturur.py (v7 - The Creator's Blueprint - Secret Manager Uyumlu)
 
 from __future__ import annotations
 import json
@@ -17,8 +17,7 @@ try:
     from google.api_core import exceptions as google_exceptions
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
-    print("⚠️ Gerekli kütüphaneler bulunamadı.")
-    print("   Lütfen 'pip install google-generativeai google-cloud-secret-manager Pillow' komutunu çalıştırın.")
+    print("FATAL: Gerekli kütüphaneler bulunamadı. Lütfen 'requirements.txt' dosyasını kurun.")
     sys.exit(1)
 
 # --- Global Değişkenler ---
@@ -26,7 +25,7 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 
-# --- Kanal Kimliği ve Stil Ayarları (Değişiklik yok) ---
+# --- Kanal Kimliği ve Stil Ayarları ---
 @dataclass(frozen=True)
 class ThumbnailStyle:
     width: int = 1280
@@ -64,9 +63,9 @@ CHANNEL_NAME = "The Creator's Blueprint"
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(asctime)s | %(message)s", stream=sys.stderr, datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
 
-# --- Gemini API Fonksiyonları (Bulut Versiyonu) ---
+# --- Gemini API Fonksiyonları (Secret Manager Entegrasyonlu) ---
 
-def load_api_keys_from_secret_manager(project_id):
+def load_api_keys_from_secret_manager(project_id: str) -> bool:
     """API anahtarlarını Secret Manager'dan yükler."""
     global API_KEYS
     if API_KEYS: return True
@@ -92,12 +91,14 @@ def load_api_keys_from_secret_manager(project_id):
 def configure_gemini():
     """Sıradaki API anahtarı ile Gemini'yi yapılandırır."""
     global current_api_key_index, model
-    if not API_KEYS or current_api_key_index >= len(API_KEYS): return None
+    if not API_KEYS or current_api_key_index >= len(API_KEYS):
+        logger.error("❌ Kullanılabilir Gemini API anahtarı kalmadı.")
+        return None
     try:
         api_key = API_KEYS[current_api_key_index]
         logger.info(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-pro")
+        model = genai.GenerativeModel("gemini-1.5-pro")
         logger.info(f"✅ API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
         return model
     except Exception as e:
@@ -141,7 +142,7 @@ def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
             model = None
             if current_api_key_index == initial_key_index: raise Exception(f"Tüm API anahtarları denendi. Son hata: {exc}") from exc
 
-# --- Yapay Zeka Komut Üretimi (Değişiklik yok) ---
+# --- Yapay Zeka Komut Üretimi ---
 def clean_script_text(script: str) -> str:
     if not script or not isinstance(script, str): return "A guide for creative professionals."
     script = re.sub(r'^=+\n(.+\n)+=+\n', '', script, flags=re.MULTILINE)
@@ -177,7 +178,7 @@ Script to analyze:
 ---
 """.strip()
 
-# --- Thumbnail Oluşturma Sınıfı (Orijinal Yapı Korunarak Güncellendi) ---
+# --- Thumbnail Oluşturma Sınıfı ---
 class ThumbnailCanvas:
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
         self.style = style
@@ -199,7 +200,6 @@ class ThumbnailCanvas:
             self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
 
     def _load_fonts(self) -> None:
-        # Debian/Linux sistemleri için standart font yolları
         font_options = [
             Path(self.style.font_path), Path("LiberationSans-Bold.ttf"),
             Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
@@ -239,10 +239,11 @@ class ThumbnailCanvas:
         x, y = pos
         stroke_width = stroke_width or self.style.text_stroke_width
         stroke_color = stroke_color or self.style.text_stroke_color
-        self.draw.text((x-stroke_width, y), text, font=font, fill=stroke_color)
-        self.draw.text((x+stroke_width, y), text, font=font, fill=stroke_color)
-        self.draw.text((x, y-stroke_width), text, font=font, fill=stroke_color)
-        self.draw.text((x, y+stroke_width), text, font=font, fill=stroke_color)
+        for dx in range(-stroke_width, stroke_width + 1):
+            for dy in range(-stroke_width, stroke_width + 1):
+                if dx*dx + dy*dy >= stroke_width*stroke_width:
+                    continue
+                self.draw.text((x+dx, y+dy), text, font=font, fill=stroke_color)
         self.draw.text((x, y), text, font=font, fill=fill_color)
 
     def _calculate_total_height_needed(self, title_lines: list, subtitle_lines: list) -> int:
@@ -273,20 +274,19 @@ class ThumbnailCanvas:
 
     def _adjust_for_perfect_fill(self, bold_title: str, intriguing_subtitle: str, text_area_width: int) -> None:
         target_height = self.style.height - self.style.top_margin - self.style.bottom_margin
-        max_attempts = 30
-        for attempt in range(max_attempts):
+        for _ in range(30):
             title_lines = self._wrap_text(bold_title, self.font_title, text_area_width)
             subtitle_lines = self._wrap_text(intriguing_subtitle, self.font_subtitle, text_area_width)
             current_height = self._calculate_total_height_needed(title_lines, subtitle_lines)
             height_ratio = current_height / target_height
             if 0.95 <= height_ratio <= 1.0:
                 logger.info(f"✓ Mükemmel ekran doluluğuna ulaşıldı (Oran: {height_ratio:.2f})")
-                break
-            if height_ratio < 0.95: self._scale_sizes(1.05); self._scale_spacing(1.05)
-            elif height_ratio > 1.0: self._scale_sizes(0.95)
+                return
+            scaling_factor = 1.025 if height_ratio < 0.95 else 0.975
+            self._scale_sizes(scaling_factor)
+            self._scale_spacing(scaling_factor)
             self._clamp_and_reload_fonts()
-        else:
-            logger.warning("⚠️ Mükemmel doluluk oranına ulaşılamadı, en yakın sonuç kullanılıyor.")
+        logger.warning("⚠️ Mükemmel doluluk oranına ulaşılamadı, en yakın sonuç kullanılıyor.")
 
     def _draw_highlighted_title(self, pos, line: str, font):
         x, y = pos
@@ -300,13 +300,13 @@ class ThumbnailCanvas:
 
     def _draw_profile_section(self, img_path: str) -> None:
         try:
-            profile_img = Image.open(img_path).convert("RGBA")
-            target_height = int(self.style.height)
-            ratio = target_height / profile_img.height
-            new_width = int(profile_img.width * ratio)
-            profile_img = profile_img.resize((new_width, target_height), Image.Resampling.LANCZOS)
-            x_pos = self.style.width - new_width
-            self.image.paste(profile_img, (x_pos, 0), profile_img)
+            with Image.open(img_path).convert("RGBA") as profile_img:
+                target_height = int(self.style.height)
+                ratio = target_height / profile_img.height
+                new_width = int(profile_img.width * ratio)
+                resized_img = profile_img.resize((new_width, target_height), Image.Resampling.LANCZOS)
+                x_pos = self.style.width - new_width
+                self.image.paste(resized_img, (x_pos, 0), resized_img)
         except Exception as e:
             logger.warning(f"⚠️ Profil resmi yüklenemedi: {img_path}. Atlanıyor. Hata: {e}")
 
@@ -318,10 +318,10 @@ class ThumbnailCanvas:
         box_height = text_height + (padding * 2)
         box_x = self.style.left_margin
         box_y = self.style.top_margin
-        box_img = Image.new("RGBA", (box_width, box_height), (0,0,0,0))
-        box_draw = ImageDraw.Draw(box_img)
-        box_draw.rounded_rectangle((0, 0, box_width, box_height), radius=10, fill=self.style.tag_bg_colour)
-        self.image.paste(box_img, (box_x, box_y), box_img)
+        with Image.new("RGBA", (box_width, box_height), (0,0,0,0)) as box_img:
+            box_draw = ImageDraw.Draw(box_img)
+            box_draw.rounded_rectangle((0, 0, box_width, box_height), radius=10, fill=self.style.tag_bg_colour)
+            self.image.paste(box_img, (box_x, box_y), box_img)
         text_x = box_x + padding
         text_y = box_y + padding
         self.draw.text((text_x, text_y), tag_text, font=self.font_tag, fill=self.style.tag_text_colour)
@@ -348,7 +348,13 @@ class ThumbnailCanvas:
             y += self._get_text_size(line, self.font_subtitle)[1] + self.current_line_spacing
 
 # --- Ana İş Akışı Fonksiyonu (BULUT VERSİYONU) ---
-def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_project_id):
+def run_thumbnail_generation(story_text: str, profile_photo_path: str, output_dir: str, worker_project_id: str) -> str:
+    """
+    Ana thumbnail üretim sürecini yönetir.
+    - Gemini'den metinleri alır.
+    - Canvas üzerine metinleri ve fotoğrafı işler.
+    - Sonucu dosyaya kaydeder.
+    """
     logger.info("--- 'The Creator's Blueprint' Küçük Resim Üretim Modülü Başlatıldı (Bulut) ---")
     
     if not load_api_keys_from_secret_manager(worker_project_id):
@@ -362,6 +368,9 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
         logger.error(f"❌ Tüm denemelere rağmen Gemini ile geçerli metin üretilemedi. Hata: {e}")
         raise
         
+    if not parts:
+        raise Exception("Gemini'den thumbnail metinleri alınamadı.")
+
     logger.info("\n📋 Başarıyla Üretilen Thumbnail Metinleri:")
     logger.info(f"  BOLD_TITLE: {parts.get('BOLD_TITLE')}")
     logger.info(f"  INTRIGUING_SUBTITLE: {parts.get('INTRIGUING_SUBTITLE')}")
@@ -388,4 +397,3 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
     except Exception as e:
         logger.error(f"❌ Thumbnail oluşturma/kaydetme aşamasında kritik hata: {e}", exc_info=True)
         raise
-
