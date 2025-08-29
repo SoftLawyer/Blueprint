@@ -1,4 +1,4 @@
-﻿# kucukresimolusturur.py (Kelime Sayısı Güncellendi)
+﻿# kucukresimolusturur.py (v6 - The Creator's Blueprint - Tamamen Bulut Uyumlu)
 
 from __future__ import annotations
 import json
@@ -10,7 +10,7 @@ from typing import Mapping, Optional
 import re
 import os
 
-# --- Gemini ve Google Cloud Kütüphaneleri ---
+# --- Gerekli Kütüphaneler ---
 try:
     import google.generativeai as genai
     from google.cloud import secretmanager
@@ -26,36 +26,45 @@ API_KEYS = []
 current_api_key_index = 0
 model = None
 
-# --- Stil ve Kanal Ayarları ---
+# --- Kanal Kimliği ve Stil Ayarları (Değişiklik yok) ---
 @dataclass(frozen=True)
 class ThumbnailStyle:
-    width: int = 1280; height: int = 720; bg_primary: tuple = (15, 15, 25)
-    bg_secondary: tuple = (25, 25, 40); text_colour: tuple = (255, 255, 255)
-    highlight_colour: tuple = (255, 215, 0); revenge_colour: tuple = (138, 43, 226)
-    revenge_bg_colour: tuple = (255, 215, 0); channel_bg: tuple = (0, 0, 0)
-    channel_text: tuple = (255, 215, 0); channel_border: tuple = (255, 215, 0)
-    font_path: Path = Path("impact.ttf"); base_title_font_size: int = 110
-    base_normal_font_size: int = 80; base_revenge_font_size: int = 100
-    base_channel_font_size: int = 32
-    min_title_font_size: int = 35; min_normal_font_size: int = 28
-    min_revenge_font_size: int = 35
-    min_channel_font_size: int = 18
-    max_title_font_size: int = 150; max_normal_font_size: int = 120
-    max_revenge_font_size: int = 140
-    max_channel_font_size: int = 40
-    left_margin: int = 15; top_margin: int = 15; bottom_margin: int = 20
-    right_margin: int = 15; base_line_spacing: int = 8; min_line_spacing: int = 3
-    max_line_spacing: int = 20; base_section_spacing: int = 15
-    min_section_spacing: int = 8; max_section_spacing: int = 30
-    text_stroke_width: int = 4; text_stroke_color: tuple = (0, 0, 0)
+    width: int = 1280
+    height: int = 720
+    bg_primary: tuple = (20, 30, 55)
+    bg_secondary: tuple = (10, 15, 25)
+    text_colour: tuple = (255, 255, 255)
+    highlight_colour: tuple = (0, 200, 255)
+    tag_bg_colour: tuple = (255, 215, 0) # Altın Sarısı
+    tag_text_colour: tuple = (10, 15, 25)
+    font_path: Path = Path("LiberationSans-Bold.ttf")
+    base_title_font_size: int = 100
+    base_subtitle_font_size: int = 60
+    tag_font_size: int = 28
+    min_title_font_size: int = 40
+    min_subtitle_font_size: int = 30
+    max_title_font_size: int = 140
+    max_subtitle_font_size: int = 80
+    left_margin: int = 50
+    top_margin: int = 60
+    bottom_margin: int = 60
+    right_margin: int = 400
+    base_line_spacing: int = 10
+    min_line_spacing: int = 5
+    max_line_spacing: int = 20
+    base_section_spacing: int = 25
+    min_section_spacing: int = 15
+    max_section_spacing: int = 40
+    text_stroke_width: int = 5
+    text_stroke_color: tuple = (10, 15, 25)
 
 STYLE = ThumbnailStyle()
-CHANNEL_NAME = "REVENGE WITH MICHAEL"
+CHANNEL_NAME = "The Creator's Blueprint"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s | %(asctime)s | %(message)s", stream=sys.stderr, datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
 
-# --- Gemini API Key Fonksiyonları ---
+# --- Gemini API Fonksiyonları (Bulut Versiyonu) ---
 
 def load_api_keys_from_secret_manager(project_id):
     """API anahtarlarını Secret Manager'dan yükler."""
@@ -83,8 +92,7 @@ def load_api_keys_from_secret_manager(project_id):
 def configure_gemini():
     """Sıradaki API anahtarı ile Gemini'yi yapılandırır."""
     global current_api_key_index, model
-    if not API_KEYS or current_api_key_index >= len(API_KEYS):
-        return None
+    if not API_KEYS or current_api_key_index >= len(API_KEYS): return None
     try:
         api_key = API_KEYS[current_api_key_index]
         logger.info(f"🔄 API anahtarı {current_api_key_index + 1}/{len(API_KEYS)} deneniyor...")
@@ -98,297 +106,275 @@ def configure_gemini():
         return configure_gemini()
 
 def ask_gemini(prompt: str) -> Optional[Mapping[str, str]]:
-    """Gemini API çağrısı yapar. Hata durumunda Exception fırlatır, anahtar değiştirir."""
+    """Gemini API çağrısı yapar ve JSON yanıtını doğrular."""
     global current_api_key_index, model
-    
-    if current_api_key_index >= len(API_KEYS):
-        current_api_key_index = 0
-        logger.warning("⚠️ Tüm API anahtarları denendi, döngü başa alınıyor.")
-
     initial_key_index = current_api_key_index
-
     while True:
         try:
             if model is None:
                 model = configure_gemini()
-                if model is None:
-                    raise Exception("Yapılandırılacak geçerli API anahtarı kalmadı.")
+                if model is None: raise Exception("Yapılandırılacak geçerli API anahtarı kalmadı.")
             
-            generation_config = {"temperature": 0.7, "top_p": 0.8, "top_k": 40, "max_output_tokens": 2048}
-            logger.info("🤖 Gemini'ye istek gönderiliyor...")
+            generation_config = {"temperature": 0.7, "top_p": 0.9, "top_k": 40}
+            logger.info("🤖 Gemini'ye thumbnail metni için istek gönderiliyor...")
             response = model.generate_content(prompt, generation_config=generation_config)
             
             if not response.text:
-                raise Exception("Gemini'den boş yanıt alındı (response.text boş).")
+                raise Exception("Gemini'den boş yanıt alındı.")
             
-            # JSON bloğunu temizle
             txt = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE)
             result = json.loads(txt)
             
-            required_keys = ["MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"]
+            required_keys = ["BOLD_TITLE", "INTRIGUING_SUBTITLE"]
             if not all(key in result for key in required_keys):
                 raise Exception(f"Gemini yanıtında eksik anahtarlar: {set(required_keys) - set(result.keys())}")
             
             return result
-            
-        except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied, google_exceptions.InvalidArgument) as e:
+        except (google_exceptions.ResourceExhausted, google_exceptions.PermissionDenied) as e:
             logger.warning(f"⚠️ API anahtarı {current_api_key_index + 1} ile ilgili sorun: {type(e).__name__}. Anahtar değiştiriliyor...")
-            current_api_key_index += 1
-            model = None # Modeli sıfırla ki yeni anahtarla yeniden konfigüre edilsin
-            if current_api_key_index >= len(API_KEYS):
-                current_api_key_index = 0
-            if current_api_key_index == initial_key_index:
-                 raise Exception(f"Tüm API anahtarları denendi ve hepsi başarısız oldu. Son hata: {e}") from e
-
+            current_api_key_index = (current_api_key_index + 1) % len(API_KEYS)
+            model = None
+            if current_api_key_index == initial_key_index: raise Exception(f"Tüm API anahtarları denendi ve hepsi başarısız oldu. Son hata: {e}") from e
         except Exception as exc:
             logger.error(f"❌ API Anahtarı {current_api_key_index + 1} ile beklenmedik API hatası: {exc}")
-            # Beklenmedik hatalarda da anahtar değiştirmeyi dene
-            current_api_key_index += 1
+            current_api_key_index = (current_api_key_index + 1) % len(API_KEYS)
             model = None
-            if current_api_key_index >= len(API_KEYS):
-                current_api_key_index = 0
-            if current_api_key_index == initial_key_index:
-                 raise Exception(f"Tüm API anahtarları denendi ve hepsi başarısız oldu. Son beklenmedik hata: {exc}") from exc
+            if current_api_key_index == initial_key_index: raise Exception(f"Tüm API anahtarları denendi. Son hata: {exc}") from exc
 
-# --- Yardımcı Fonksiyonlar ---
-def count_words(text: str) -> int:
-    if not text or not isinstance(text, str): return 0
-    return len(re.sub(r'\*', '', text.strip()).split())
-def clean_story_text(story: str) -> str:
-    if not story or not isinstance(story, str): return "Bir intikam hikayesi anlatılacak."
-    if len(story) > 8000: story = story[:8000] + "..."
-    story = re.sub(r'[^\w\s.,!?;:\-\'"()[\]{}]', ' ', story)
-    story = re.sub(r'\s+', ' ', story).strip()
-    if len(story) < 50: story = f"{story} Bu kişi büyük bir intikam planladı ve başarılı oldu."
-    return story
+# --- Yapay Zeka Komut Üretimi (Değişiklik yok) ---
+def clean_script_text(script: str) -> str:
+    if not script or not isinstance(script, str): return "A guide for creative professionals."
+    script = re.sub(r'^=+\n(.+\n)+=+\n', '', script, flags=re.MULTILINE)
+    script = script.replace('---', '')
+    if len(script) > 5000: script = script[:5000] + "..."
+    script = re.sub(r'\s+', ' ', script).strip()
+    return script
 
-# GÜNCELLENDİ: build_prompt fonksiyonu yeni kelime aralığını yansıtacak şekilde değiştirildi.
-def build_prompt(story: str) -> str:
-    clean_story = clean_story_text(story)
+def build_prompt(script: str) -> str:
+    clean_script = clean_script_text(script)
     return f"""
-Analyze this revenge story and create compelling YouTube thumbnail text with a TOTAL WORD COUNT between 60 and 100 words.
-Create 4 text sections:
-1. MAIN_HOOK: Most dramatic attention-grabber (20-28 words) - mark 4-5 key trigger words with *asterisks*
-2. SETUP: Context that builds tension (20-28 words) - mark 4-5 trigger words with *asterisks*
-3. REVENGE_LINE: The ultimate revenge payoff (2-5 words, VERY PUNCHY AND SHORT)
-4. EXTRA_DETAIL: Additional dramatic impact (18-26 words) - mark 3-4 trigger words with *asterisks*
+Analyze this script from the YouTube channel 'The Creator's Blueprint' and create two compelling text sections for a high-click-through-rate thumbnail.
+Your host is Leo, an empathetic guide for American creative professionals. The tone should be professional, intriguing, and empowering.
+
+Create 2 text sections:
+1.  **BOLD_TITLE:** The most powerful and concise phrase from the script that grabs attention. Should be 3-5 words. It should summarize the core promise or the biggest pain point.
+2.  **INTRIGUING_SUBTITLE:** A question or statement that creates curiosity and highlights the core problem or promise of the video. Should be 6-12 words.
+
 CRITICAL REQUIREMENTS:
-- TOTAL WORD COUNT: Must be between 60-100 words (excluding asterisks)
-- Return ONLY valid JSON format with keys: "MAIN_HOOK", "SETUP", "REVENGE_LINE", "EXTRA_DETAIL"
-Story:
+-   The text must be in ALL CAPS.
+-   Do NOT use any special characters like asterisks (*).
+-   Return ONLY a valid JSON format with keys: "BOLD_TITLE", "INTRIGUING_SUBTITLE".
+
+Example Output:
+{{
+  "BOLD_TITLE": "THE ARTIST MYTH",
+  "INTRIGUING_SUBTITLE": "WHY YOUR PASSION ISN'T PAYING THE BILLS (YET)"
+}}
+
+Script to analyze:
 ---
-{clean_story}
+{clean_script}
 ---
 """.strip()
 
+# --- Thumbnail Oluşturma Sınıfı (Orijinal Yapı Korunarak Güncellendi) ---
 class ThumbnailCanvas:
-    # ... Bu sınıfın içeriğinde herhangi bir değişiklik yapılmamıştır ...
     def __init__(self, style: ThumbnailStyle = STYLE) -> None:
-        self.style = style; self.image = Image.new("RGB", (style.width, style.height), style.bg_primary); self.draw = ImageDraw.Draw(self.image); self._create_gradient_background(); self.current_title_size = style.base_title_font_size; self.current_normal_size = style.base_normal_font_size; self.current_revenge_size = style.base_revenge_font_size; self.current_channel_size = style.base_channel_font_size; self.current_line_spacing = style.base_line_spacing; self.current_section_spacing = style.base_section_spacing; self._load_fonts()
-    def _create_gradient_background(self) -> None:
-        for y in range(self.style.height): ratio = y / self.style.height; r = int(self.style.bg_primary[0] * (1 - ratio) + self.style.bg_secondary[0] * ratio); g = int(self.style.bg_primary[1] * (1 - ratio) + self.style.bg_secondary[1] * ratio); b = int(self.style.bg_primary[2] * (1 - ratio) + self.style.bg_secondary[2] * ratio); self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
-    def _load_fonts(self) -> None:
-        font_options = [
-            self.style.font_path, 
-            Path("impact.ttf"), Path("Impact.ttf"), 
-            Path("/usr/share/fonts/truetype/msttcorefonts/Impact.ttf"),
-            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
-            Path("arial.ttf"), Path("Arial.ttf"),
-            Path("/usr/share/fonts/truetype/msttcorefonts/Arial.ttf")
-        ]
-        font_loaded = False
-        for font_path in font_options:
-            if font_path.exists():
-                try: 
-                    self.font_title = ImageFont.truetype(str(font_path), self.current_title_size)
-                    self.font_normal = ImageFont.truetype(str(font_path), self.current_normal_size)
-                    self.font_revenge = ImageFont.truetype(str(font_path), self.current_revenge_size)
-                    self.font_channel = ImageFont.truetype(str(font_path), self.current_channel_size)
-                    font_loaded = True
-                    logger.info(f"✅ Font başarıyla yüklendi: {font_path}")
-                    break
-                except (IOError, OSError) as e: 
-                    logger.warning(f"⚠️ Font dosyası bulundu ama yüklenemedi {font_path}: {e}")
-        if not font_loaded: 
-            logger.error("❌ Hiçbir TrueType font bulunamadı! Varsayılan font kullanılıyor. Lütfen 'impact.ttf' veya 'arial.ttf' yükleyin.")
-            self.font_title = self.font_normal = self.font_revenge = self.font_channel = ImageFont.load_default()
-    def _text_width(self, text: str, font: ImageFont.FreeTypeFont) -> int:
-        if not text: return 0
-        try: return font.getlength(text)
-        except AttributeError: bbox = self.draw.textbbox((0, 0), text, font=font); return bbox[2] - bbox[0]
-    def _text_height(self, font: ImageFont.FreeTypeFont) -> int:
-        try: bbox = font.getbbox("Ag"); return bbox[3] - bbox[1]
-        except: return 20
-    def _calculate_total_height_needed(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int) -> int:
-        total_height = self.style.top_margin; hook_lines = self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width); total_height += len(hook_lines) * (self._text_height(self.font_title) + self.current_line_spacing); total_height += self.current_section_spacing; setup_lines = self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width); total_height += len(setup_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
-        if extra_detail: extra_lines = self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width); total_height += len(extra_lines) * (self._text_height(self.font_normal) + self.current_line_spacing); total_height += self.current_section_spacing
-        total_height += self.style.bottom_margin; return total_height
-    def _adjust_for_perfect_fill(self, main_hook: str, setup: str, revenge_line: str, extra_detail: str, text_area_width: int, total_words: int) -> None:
-        revenge_area_height = 140; target_height = self.style.height - self.style.top_margin - self.style.bottom_margin - revenge_area_height; max_attempts = 30; scale_factor = 1.05 if total_words < 65 else 0.95 if total_words > 95 else 1.0; spacing_factor = 1.1 if total_words < 65 else 0.9 if total_words > 95 else 1.0
-        self._scale_sizes(scale_factor); self._scale_spacing(spacing_factor); self._clamp_and_reload_fonts()
-        for attempt in range(max_attempts):
-            current_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); height_ratio = current_height / target_height
-            if 0.98 <= height_ratio <= 1.02: logger.info(f"✓ Mükemmel ekran doluluğuna ulaşıldı (Oran: {height_ratio:.2f})"); break
-            if height_ratio < 0.98:
-                if self._can_increase_sizes(): self._scale_sizes(min(1.06, (1.0 / height_ratio)))
-                else: self._scale_spacing(1.08)
-            elif height_ratio > 1.02: self._scale_sizes(max(0.94, (1.0 / height_ratio)))
-            self._clamp_and_reload_fonts()
-    def _can_increase_sizes(self) -> bool: return (self.current_title_size < self.style.max_title_font_size or self.current_normal_size < self.style.max_normal_font_size or self.current_revenge_size < self.style.max_revenge_font_size)
-    def _scale_sizes(self, factor: float) -> None: self.current_title_size = int(self.current_title_size * factor); self.current_normal_size = int(self.current_normal_size * factor); self.current_revenge_size = int(self.current_revenge_size * factor)
-    def _scale_spacing(self, factor: float) -> None: self.current_line_spacing = int(self.current_line_spacing * factor); self.current_section_spacing = int(self.current_section_spacing * factor)
-    def _clamp_and_reload_fonts(self): self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size)); self.current_normal_size = max(self.style.min_normal_font_size, min(self.style.max_normal_font_size, self.current_normal_size)); self.current_revenge_size = max(self.style.min_revenge_font_size, min(self.style.max_revenge_font_size, self.current_revenge_size)); self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing)); self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing)); self._load_fonts()
-    def _draw_text_with_outline(self, pos, text, font, fill_color, outline_color=None, outline_width=None):
-        x, y = pos; outline_color = outline_color or self.style.text_stroke_color
-        if font is None or font.path is None: self.draw.text((x, y), text, fill=fill_color); return
-        outline_width = outline_width or max(3, int(getattr(font, 'size', 30) / 30))
-        try: self.draw.text((x, y), text, font=font, fill=fill_color, stroke_width=outline_width, stroke_fill=outline_color)
-        except TypeError: self.draw.text((x, y), text, font=font, fill=fill_color) # Fallback for older Pillow versions
-    def _wrap_text_smart(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list:
-        if not text: return []
-        parts, current, in_highlight = [], "", False
-        for char in text:
-            if char == '*':
-                if current: parts.append((current, in_highlight))
-                current, in_highlight = "", not in_highlight
-            else: current += char
-        if current: parts.append((current, in_highlight))
-        lines, current_line_parts, current_line_width = [], [], 0
-        for part_text, is_highlighted in parts:
-            for word in part_text.split():
-                word_width = self._text_width(word + " ", font)
-                if current_line_width + word_width > max_width and current_line_parts: lines.append(current_line_parts); current_line_parts, current_line_width = [], 0
-                current_line_parts.append((word, is_highlighted)); current_line_width += word_width
-        if current_line_parts: lines.append(current_line_parts)
-        return lines
-    def _draw_highlighted_text_line(self, line_parts, pos, font):
-        x, y = pos
-        for word, is_highlighted in line_parts:
-            color = self.style.highlight_colour if is_highlighted else self.style.text_colour
-            self._draw_text_with_outline((x, y), word, font, color)
-            x += self._text_width(word + " ", font)
-    def _draw_revenge_text_with_background_bottom(self, text: str, profile_width: int) -> None:
-        available_width = self.style.width - profile_width - (self.style.left_margin * 2); revenge_text = text.upper(); best_font_size = self.style.min_revenge_font_size
-        for font_size in range(400, self.style.min_revenge_font_size - 1, -2):
-            try:
-                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
-                if self._text_width(revenge_text, test_font) <= available_width - 20: best_font_size = font_size; break
-            except (IOError, OSError): continue
-        try: revenge_font = ImageFont.truetype(str(self.style.font_path), best_font_size)
-        except: revenge_font = self.font_revenge
-        text_width = self._text_width(revenge_text, revenge_font); text_height = self._text_height(revenge_font); padding = 20; bg_height = text_height + (padding * 2); bg_y = self.style.height - bg_height - 20; bg_x = self.style.left_margin
-        bg_img = Image.new("RGBA", (available_width, bg_height), (0, 0, 0, 0)); bg_draw = ImageDraw.Draw(bg_img); bg_draw.rounded_rectangle([0, 0, available_width, bg_height], radius=15, fill=(*self.style.revenge_bg_colour, 240)); self.image.paste(bg_img, (bg_x, bg_y), bg_img)
-        text_x = bg_x + (available_width - text_width) // 2; text_y = bg_y + padding
-        self._draw_text_with_outline((text_x, text_y), revenge_text, revenge_font, self.style.revenge_colour, outline_color=(0, 0, 0), outline_width=4)
-    def _draw_profile_section(self, img_path: str, channel_name: str) -> int:
-        try:
-            avatar = Image.open(img_path).convert("RGBA")
-        except (FileNotFoundError, Exception) as e:
-            logger.warning(f"Profil resmi yüklenemedi: {img_path}. Varsayılan bir resim oluşturuluyor. Hata: {e}")
-            avatar = Image.new("RGBA", (200, 720), (100, 100, 100, 255))
-        target_width, target_height = 200, 720; avatar = avatar.resize((target_width, target_height), Image.Resampling.LANCZOS); x = self.style.width - target_width; self.image.paste(avatar, (x, 0), avatar if avatar.mode == 'RGBA' else None)
-        channel_text = channel_name.upper(); best_channel_font_size = self.style.min_channel_font_size; padding = 15
-        for font_size in range(self.style.max_channel_font_size, self.style.min_channel_font_size - 1, -2):
-            try:
-                test_font = ImageFont.truetype(str(self.style.font_path), font_size)
-                if self._text_width(channel_text, test_font) <= target_width - 20 - (padding * 2): best_channel_font_size = font_size; break
-            except (IOError, OSError): continue
-        try: channel_font = ImageFont.truetype(str(self.style.font_path), best_channel_font_size)
-        except: channel_font = self.font_channel
-        text_width = self._text_width(channel_text, channel_font); text_height = self._text_height(channel_font); box_height = text_height + (padding * 2); box_width = target_width - 20
-        box_y = target_height - box_height - 80; box_x = x + 10
-        box_img = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0)); box_draw = ImageDraw.Draw(box_img); box_draw.rounded_rectangle([0, 0, box_width, box_height], radius=12, fill=(*self.style.channel_bg, 230)); box_draw.rounded_rectangle([1, 1, box_width-1, box_height-1], radius=12, outline=(*self.style.channel_border, 255), width=3); self.image.paste(box_img, (box_x, box_y), box_img)
-        text_x = box_x + (box_width - text_width) // 2; text_y = box_y + padding
-        self._draw_text_with_outline((text_x, text_y), channel_text, channel_font, self.style.channel_text, outline_color=(0, 0, 0), outline_width=2)
-        return target_width
-    def compose(self, main_hook, setup, revenge_line, extra_detail, profile_pic_path):
-        profile_width = self._draw_profile_section(profile_pic_path, CHANNEL_NAME); text_area_width = self.style.width - profile_width - self.style.left_margin - self.style.right_margin; total_words = sum(count_words(t) for t in [main_hook, setup, revenge_line, extra_detail]); self._adjust_for_perfect_fill(main_hook, setup, revenge_line, extra_detail, text_area_width, total_words)
-        revenge_area_height = 140; total_height = self._calculate_total_height_needed(main_hook, setup, revenge_line, extra_detail, text_area_width); available_height = self.style.height - self.style.bottom_margin - revenge_area_height; y = max(self.style.top_margin, (available_height - total_height) // 2)
-        for line_parts in self._wrap_text_smart(main_hook.upper(), self.font_title, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_title); y += self._text_height(self.font_title) + self.current_line_spacing
-        y += self.current_section_spacing
-        for line_parts in self._wrap_text_smart(setup.upper(), self.font_normal, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal); y += self._text_height(self.font_normal) + self.current_line_spacing
-        y += self.current_section_spacing
-        if extra_detail:
-            for line_parts in self._wrap_text_smart(extra_detail.upper(), self.font_normal, text_area_width): self._draw_highlighted_text_line(line_parts, (self.style.left_margin, y), self.font_normal); y += self._text_height(self.font_normal) + self.current_line_spacing
-        self._draw_revenge_text_with_background_bottom(revenge_line, profile_width)
+        self.style = style
+        self.image = Image.new("RGB", (style.width, style.height))
+        self.draw = ImageDraw.Draw(self.image)
+        self._create_gradient_background()
+        self.current_title_size = style.base_title_font_size
+        self.current_subtitle_size = style.base_subtitle_font_size
+        self.current_line_spacing = style.base_line_spacing
+        self.current_section_spacing = style.base_section_spacing
+        self._load_fonts()
 
-# --- ANA İŞ AKIŞI FONKSİYONU (GÜNCELLENDİ) ---
+    def _create_gradient_background(self) -> None:
+        for y in range(self.style.height):
+            ratio = y / self.style.height
+            r = int(self.style.bg_primary[0] * (1 - ratio) + self.style.bg_secondary[0] * ratio)
+            g = int(self.style.bg_primary[1] * (1 - ratio) + self.style.bg_secondary[1] * ratio)
+            b = int(self.style.bg_primary[2] * (1 - ratio) + self.style.bg_secondary[2] * ratio)
+            self.draw.line([(0, y), (self.style.width, y)], fill=(r, g, b))
+
+    def _load_fonts(self) -> None:
+        # Debian/Linux sistemleri için standart font yolları
+        font_options = [
+            Path(self.style.font_path), Path("LiberationSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            Path("Arial.ttf"),
+        ]
+        try:
+            font_path_str = next(str(p) for p in font_options if p.exists())
+            self.font_title = ImageFont.truetype(font_path_str, self.current_title_size)
+            self.font_subtitle = ImageFont.truetype(font_path_str, self.current_subtitle_size)
+            self.font_tag = ImageFont.truetype(font_path_str, self.style.tag_font_size)
+            logger.info(f"✅ Fontlar başarıyla yüklendi: {font_path_str}")
+        except (StopIteration, IOError, OSError):
+            logger.error("❌ Hiçbir TrueType font bulunamadı! Varsayılan font kullanılıyor.")
+            self.font_title = self.font_subtitle = self.font_tag = ImageFont.load_default()
+
+    def _get_text_size(self, text, font):
+        if not text: return 0, 0
+        try:
+            bbox = self.draw.textbbox((0, 0), text, font=font)
+            return bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except AttributeError:
+            return self.draw.textsize(text, font=font)
+
+    def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+        if not text: return []
+        lines = []
+        words = text.split()
+        while words:
+            line = ''
+            while words and self._get_text_size(line + words[0], font)[0] <= max_width:
+                line += (words.pop(0) + ' ')
+            lines.append(line.strip())
+        return lines
+
+    def _draw_text_with_outline(self, pos, text, font, fill_color, stroke_color=None, stroke_width=None):
+        x, y = pos
+        stroke_width = stroke_width or self.style.text_stroke_width
+        stroke_color = stroke_color or self.style.text_stroke_color
+        self.draw.text((x-stroke_width, y), text, font=font, fill=stroke_color)
+        self.draw.text((x+stroke_width, y), text, font=font, fill=stroke_color)
+        self.draw.text((x, y-stroke_width), text, font=font, fill=stroke_color)
+        self.draw.text((x, y+stroke_width), text, font=font, fill=stroke_color)
+        self.draw.text((x, y), text, font=font, fill=fill_color)
+
+    def _calculate_total_height_needed(self, title_lines: list, subtitle_lines: list) -> int:
+        tag_height_with_margin = 60 
+        total_height = self.style.top_margin + tag_height_with_margin
+        if title_lines:
+            total_height += len(title_lines) * (self._get_text_size("A", self.font_title)[1] + self.current_line_spacing)
+            total_height += self.current_section_spacing
+        if subtitle_lines:
+            total_height += len(subtitle_lines) * (self._get_text_size("A", self.font_subtitle)[1] + self.current_line_spacing)
+        total_height += self.style.bottom_margin
+        return total_height
+        
+    def _scale_sizes(self, factor: float) -> None:
+        self.current_title_size = int(self.current_title_size * factor)
+        self.current_subtitle_size = int(self.current_subtitle_size * factor)
+
+    def _scale_spacing(self, factor: float) -> None:
+        self.current_line_spacing = int(self.current_line_spacing * factor)
+        self.current_section_spacing = int(self.current_section_spacing * factor)
+        
+    def _clamp_and_reload_fonts(self):
+        self.current_title_size = max(self.style.min_title_font_size, min(self.style.max_title_font_size, self.current_title_size))
+        self.current_subtitle_size = max(self.style.min_subtitle_font_size, min(self.style.max_subtitle_font_size, self.current_subtitle_size))
+        self.current_line_spacing = max(self.style.min_line_spacing, min(self.style.max_line_spacing, self.current_line_spacing))
+        self.current_section_spacing = max(self.style.min_section_spacing, min(self.style.max_section_spacing, self.current_section_spacing))
+        self._load_fonts()
+
+    def _adjust_for_perfect_fill(self, bold_title: str, intriguing_subtitle: str, text_area_width: int) -> None:
+        target_height = self.style.height - self.style.top_margin - self.style.bottom_margin
+        max_attempts = 30
+        for attempt in range(max_attempts):
+            title_lines = self._wrap_text(bold_title, self.font_title, text_area_width)
+            subtitle_lines = self._wrap_text(intriguing_subtitle, self.font_subtitle, text_area_width)
+            current_height = self._calculate_total_height_needed(title_lines, subtitle_lines)
+            height_ratio = current_height / target_height
+            if 0.95 <= height_ratio <= 1.0:
+                logger.info(f"✓ Mükemmel ekran doluluğuna ulaşıldı (Oran: {height_ratio:.2f})")
+                break
+            if height_ratio < 0.95: self._scale_sizes(1.05); self._scale_spacing(1.05)
+            elif height_ratio > 1.0: self._scale_sizes(0.95)
+            self._clamp_and_reload_fonts()
+        else:
+            logger.warning("⚠️ Mükemmel doluluk oranına ulaşılamadı, en yakın sonuç kullanılıyor.")
+
+    def _draw_highlighted_title(self, pos, line: str, font):
+        x, y = pos
+        if " " in line:
+             first_word, rest_of_line = line.split(" ", 1)
+             self._draw_text_with_outline((x, y), first_word, font, self.style.highlight_colour)
+             x += self._get_text_size(first_word + " ", font)[0]
+             self._draw_text_with_outline((x, y), rest_of_line, font, self.style.text_colour)
+        else:
+             self._draw_text_with_outline((x, y), line, font, self.style.highlight_colour)
+
+    def _draw_profile_section(self, img_path: str) -> None:
+        try:
+            profile_img = Image.open(img_path).convert("RGBA")
+            target_height = int(self.style.height)
+            ratio = target_height / profile_img.height
+            new_width = int(profile_img.width * ratio)
+            profile_img = profile_img.resize((new_width, target_height), Image.Resampling.LANCZOS)
+            x_pos = self.style.width - new_width
+            self.image.paste(profile_img, (x_pos, 0), profile_img)
+        except Exception as e:
+            logger.warning(f"⚠️ Profil resmi yüklenemedi: {img_path}. Atlanıyor. Hata: {e}")
+
+    def _draw_target_audience_tag(self):
+        tag_text = "FOR CREATIVES"
+        padding = 15
+        text_width, text_height = self._get_text_size(tag_text, self.font_tag)
+        box_width = text_width + (padding * 2)
+        box_height = text_height + (padding * 2)
+        box_x = self.style.left_margin
+        box_y = self.style.top_margin
+        box_img = Image.new("RGBA", (box_width, box_height), (0,0,0,0))
+        box_draw = ImageDraw.Draw(box_img)
+        box_draw.rounded_rectangle((0, 0, box_width, box_height), radius=10, fill=self.style.tag_bg_colour)
+        self.image.paste(box_img, (box_x, box_y), box_img)
+        text_x = box_x + padding
+        text_y = box_y + padding
+        self.draw.text((text_x, text_y), tag_text, font=self.font_tag, fill=self.style.tag_text_colour)
+        return box_height
+
+    def compose(self, bold_title: str, intriguing_subtitle: str, profile_pic_path: str):
+        self._draw_profile_section(profile_pic_path)
+        tag_height = self._draw_target_audience_tag()
+        
+        text_area_width = self.style.width - self.style.left_margin - self.style.right_margin
+        self._adjust_for_perfect_fill(bold_title, intriguing_subtitle, text_area_width)
+
+        y = self.style.top_margin + tag_height + 20
+        title_lines = self._wrap_text(bold_title, self.font_title, text_area_width)
+        for line in title_lines:
+            self._draw_highlighted_title((self.style.left_margin, y), line, self.font_title)
+            y += self._get_text_size(line, self.font_title)[1] + self.current_line_spacing
+            
+        y += self.current_section_spacing
+
+        subtitle_lines = self._wrap_text(intriguing_subtitle, self.font_subtitle, text_area_width)
+        for line in subtitle_lines:
+            self._draw_text_with_outline((self.style.left_margin, y), line, self.font_subtitle, self.style.text_colour)
+            y += self._get_text_size(line, self.font_subtitle)[1] + self.current_line_spacing
+
+# --- Ana İş Akışı Fonksiyonu (BULUT VERSİYONU) ---
 def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_project_id):
-    """Secret Manager'dan anahtar okuyarak Gemini API kullanır ve detaylı hata takibi yapar."""
-    logger.info("--- YouTube Küçük Resmi Üretim Modülü Başlatıldı (v3 - Kelime Sayısı 60-100) ---")
+    logger.info("--- 'The Creator's Blueprint' Küçük Resim Üretim Modülü Başlatıldı (Bulut) ---")
     
     if not load_api_keys_from_secret_manager(worker_project_id):
-        raise Exception("Thumbnail üretimi için Gemini API anahtarları yüklenemedi. Secret Manager yapılandırmasını kontrol edin.")
+        raise Exception("Thumbnail üretimi için Gemini API anahtarları yüklenemedi.")
     
-    clean_story = clean_story_text(story_text)
-    logger.info(f"📝 Hikaye metni temizlendi: {len(clean_story)} karakter")
+    prompt = build_prompt(story_text)
     
-    parts = None
-    max_retries = 5
-    last_error = None 
-    
-    logger.info("🤖 Gemini ile thumbnail metni üretimi için denemeler başlıyor...")
-    
-    for attempt in range(max_retries):
-        logger.info(f"🔄 Deneme {attempt + 1}/{max_retries}")
-        try:
-            current_parts = ask_gemini(build_prompt(clean_story))
-            if current_parts is None:
-                last_error = Exception("ask_gemini bilinmeyen bir nedenle None döndürdü.")
-                logger.error(f"❌ Gemini'den yanıt alınamadı (deneme {attempt + 1})")
-                continue
-            
-            total_words = sum(count_words(v) for v in current_parts.values())
-            logger.info(f"📊 Üretilen metnin toplam kelime sayısı: {total_words}")
-            
-            # GÜNCELLENDİ: İstenen kelime aralığı 60-100 olarak değiştirildi.
-            if 60 <= total_words <= 100:
-                parts = current_parts
-                logger.info(f"✅ İdeal kelime sayısında ({total_words}) metin üretildi. Döngü sonlandırılıyor.")
-                break
-            # GÜNCELLENDİ: Kabul edilebilir aralık da yeni hedefe göre ayarlandı.
-            elif 55 <= total_words <= 105:
-                parts = current_parts
-                logger.warning(f"⚠️ Kabul edilebilir kelime sayısında ({total_words}) metin üretildi. Yine de bu metin kullanılacak.")
-                break
-            else:
-                # GÜNCELLENDİ: Hata mesajları yeni hedefi yansıtıyor.
-                logger.warning(f"⚠️ Kelime sayısı hedef dışında: {total_words} (hedef: 60-100). Tekrar denenecek.")
-                last_error = Exception(f"Kelime sayısı {total_words} hedef aralığın (60-100) dışında.")
-
-        except Exception as e:
-            logger.error(f"❌ Gemini çağrısı sırasında kritik hata (deneme {attempt + 1}): {e}")
-            last_error = e
-            if attempt == max_retries - 1:
-                logger.critical("❌ Son deneme de başarısız oldu.")
-            continue
-    
-    if parts is None:
-        logger.error("❌ Tüm denemelere rağmen Gemini ile geçerli bir metin üretilemedi.")
-        if last_error:
-            raise Exception(f"Thumbnail metni üretilemedi. Son karşılaşılan hata: {last_error}") from last_error
-        else:
-            raise Exception("Thumbnail metni üretilemedi, ancak spesifik bir hata yakalanamadı.")
-    
+    try:
+        parts = ask_gemini(prompt)
+    except Exception as e:
+        logger.error(f"❌ Tüm denemelere rağmen Gemini ile geçerli metin üretilemedi. Hata: {e}")
+        raise
+        
     logger.info("\n📋 Başarıyla Üretilen Thumbnail Metinleri:")
-    for key, value in parts.items():
-        word_count = count_words(value)
-        logger.info(f"  {key}: {word_count} kelime - {value[:60]}...")
+    logger.info(f"  BOLD_TITLE: {parts.get('BOLD_TITLE')}")
+    logger.info(f"  INTRIGUING_SUBTITLE: {parts.get('INTRIGUING_SUBTITLE')}")
     
     logger.info("\n🎨 Thumbnail canvas oluşturuluyor...")
     
     try:
         canvas = ThumbnailCanvas(STYLE)
-        logger.info("✅ Canvas başarıyla oluşturuldu.")
-        logger.info("🖼️ Thumbnail üzerine metinler ve resim yerleştiriliyor (compose)...")
         canvas.compose(
-            main_hook=parts.get("MAIN_HOOK", ""),
-            setup=parts.get("SETUP", ""),
-            revenge_line=parts.get("REVENGE_LINE", "REVENGE"),
-            extra_detail=parts.get("EXTRA_DETAIL", ""),
+            bold_title=parts.get("BOLD_TITLE", "YOUR BLUEPRINT"),
+            intriguing_subtitle=parts.get("INTRIGUING_SUBTITLE", "Build a sustainable creative career."),
             profile_pic_path=profile_photo_path,
         )
-        logger.info("✅ Thumbnail compose işlemi başarılı.")
         
         thumbnail_path = os.path.join(output_dir, "kucuk_resim.png")
         canvas.image.save(thumbnail_path, "PNG", quality=95)
@@ -397,9 +383,9 @@ def run_thumbnail_generation(story_text, profile_photo_path, output_dir, worker_
         file_size = os.path.getsize(thumbnail_path)
         logger.info(f"📏 Dosya boyutu: {file_size / 1024:.1f} KB")
         
-        logger.info("✅ Thumbnail üretimi başarıyla tamamlandı!")
         return thumbnail_path
         
     except Exception as e:
         logger.error(f"❌ Thumbnail oluşturma/kaydetme aşamasında kritik hata: {e}", exc_info=True)
-        raise Exception(f"Canvas oluşturma veya dosyayı kaydetme başarısız oldu: {e}") from e
+        raise
+

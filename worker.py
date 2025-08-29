@@ -1,4 +1,4 @@
-# worker.py (v11 - Detaylı Süreç Takibi + Random Arkaplan Video)
+# worker.py (v12 - The Creator's Blueprint Uyumlu)
 
 import os
 import logging
@@ -12,12 +12,11 @@ import random
 from datetime import datetime
 
 # Projenizdeki mevcut modülleri import ediyoruz
-import hikayeuretir
-import googleilesesolustur
-import profilfotoolusturur
-import profilfotonunarkasinisiler
-import videoyapar
-import kucukresimolusturur
+# GÜNCELLEME: Artık her video için yeni metin ve ses üreteceğiz, ama görseller sabit olacak.
+import icerik_uretici_local_v3 as icerik_uretici # Yeni metin üretici
+import ses_uretici_local as ses_uretici # Yeni ses üretici
+import videoyapar 
+import kucukresimolusturur # Bu modül sabit 'kucukresimicinfoto.png' kullanacak
 
 from google.cloud import storage
 from google.api_core import exceptions
@@ -29,10 +28,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# Ana logger'ı al
 logger = logging.getLogger()
-
-# Console handler ekle (eğer yoksa)
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
@@ -40,12 +36,13 @@ if not logger.handlers:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+# --- SABİT DEĞİŞKENLER ---
 KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
 CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
 HATA_BUCKET_ADI = "video-fabrikam-hatalar"
-IDLE_SHUTDOWN_SECONDS = 600
+IDLE_SHUTDOWN_SECONDS = 600 # 10 dakika
 
-# --- Yardımcı Fonksiyonlar ---
+# --- Yardımcı Fonksiyonlar (Değişiklik yok) ---
 def get_metadata(metadata_path):
     try:
         response = requests.get(
@@ -81,17 +78,9 @@ def _safe_prepend_to_gcs_file(storage_client, bucket_name, filename, content_to_
         blob = bucket.blob(filename)
         for attempt in range(max_retries):
             try:
-                current_content = blob.download_as_text()
-                current_generation = blob.generation
-            except exceptions.NotFound:
-                current_content = ""
-                current_generation = 0
-            except exceptions.PreconditionFailed:
-                logging.warning(f"⚠️ '{filename}' için GCS çakışması. Tekrar deneniyor... ({attempt + 1})")
-                time.sleep(1)
-                continue
-            updated_content = content_to_prepend + current_content
-            try:
+                current_content = blob.download_as_text() if blob.exists() else ""
+                current_generation = blob.generation if blob.exists() else 0
+                updated_content = content_to_prepend + current_content
                 blob.upload_from_string(updated_content, content_type="text/plain; charset=utf-8", if_generation_match=current_generation)
                 logging.info(f"📝 Log GCS'teki merkezi dosyaya eklendi: gs://{bucket_name}/{filename}")
                 return
@@ -117,73 +106,27 @@ def log_error_to_gcs(storage_client, bucket_name, title, error_details):
         title_content = f"{timestamp} - {title}\n"
         _safe_prepend_to_gcs_file(storage_client, bucket_name, "tamamlanamayanbasliklar.txt", title_content)
 
-def get_random_background_video(storage_client, temp_dir):
-    """Random arkaplan videosu seçer ve indirir."""
-    try:
-        logging.info("🎬 Random arkaplan videosu seçiliyor...")
-        kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-        
-        random_number = random.randint(1, 10)
-        selected_video_name = f"arkaplan{random_number}.mp4"
-        
-        bg_video_blob = kaynak_bucket.blob(selected_video_name)
-        if not bg_video_blob.exists():
-            logging.warning(f"⚠️ '{selected_video_name}' bulunamadı, arkaplan1.mp4 kullanılacak.")
-            selected_video_name = "arkaplan1.mp4"
-            bg_video_blob = kaynak_bucket.blob(selected_video_name)
-        
-        bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
-        logging.info(f"📥 Arkaplan videosu indiriliyor: {selected_video_name}")
-        bg_video_blob.download_to_filename(bg_video_path)
-        
-        logging.info(f"✅ Random arkaplan videosu hazır: {selected_video_name}")
-        return bg_video_path
-        
-    except Exception as e:
-        logging.error(f"❌ Random arkaplan video seçiminde hata: {e}")
-        try:
-            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-            bg_video_blob = kaynak_bucket.blob("arkaplan1.mp4")
-            bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
-            bg_video_blob.download_to_filename(bg_video_path)
-            logging.info("✅ Hata nedeniyle varsayılan arkaplan1.mp4 kullanıldı.")
-            return bg_video_path
-        except Exception as fallback_error:
-            logging.error(f"❌ Varsayılan arkaplan videosu da indirilemedi: {fallback_error}")
-            raise
-
 # --- ANA İŞ AKIŞI ---
 def main_loop():
     storage_client = storage.Client()
     idle_start_time = None
     
-    logging.info("🚀 Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
+    logging.info("🚀 'The Creator's Blueprint' Video Fabrikası İşçisi başlatıldı. Görev bekleniyor...")
     logging.info("=" * 80)
     
-    worker_project_id = os.environ.get("GCP_PROJECT") or get_metadata("project/project-id")
-    if not worker_project_id:
-        logging.critical("❌ Makinenin Proje ID'si alınamadı! Worker durduruluyor.")
-        return
-
     while True:
         story_title = None
         temp_dir = None
         try:
-            logging.info("\n🔍 Yeni hikaye konusu aranıyor...")
+            logging.info("\n🔍 Yeni video konusu aranıyor...")
             
-            # HİKAYE ÜRETİM SÜRECİ - DETAYLI TAKİP
-            logging.info("📚 HİKAYE ÜRETİM SÜRECİ BAŞLADI")
+            # ADIM 1: İÇERİK ÜRETİMİ
+            logging.info("📚 İÇERİK ÜRETİM SÜRECİ BAŞLADI")
             logging.info("-" * 50)
             
-            (
-                story_content,
-                story_title_from_module,
-                protagonist_profile,
-                api_keys,
-                formatted_text
-            ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
-            
-            story_title = story_title_from_module
+            # Not: Bu fonksiyon artık yerel dosyalarla çalışıyor. GCS versiyonu için hikayeuretir'i kullanın.
+            # Bu örnekte, yerel dosyaların GCS ile senkronize olduğunu varsayıyoruz.
+            formatted_text, story_title = icerik_uretici.run_script_generation_process_for_worker()
 
             if not story_title:
                 if idle_start_time is None:
@@ -199,88 +142,90 @@ def main_loop():
                 time.sleep(60)
                 continue
             
-            idle_start_time = None
-            logging.info(f"🎯 YENİ HİKAYE BAŞLADI: '{story_title}'")
+            idle_start_time = None # İş bulunduğu için sayacı sıfırla
+            logging.info(f"🎯 YENİ VİDEO BAŞLADI: '{story_title}'")
             logging.info("=" * 80)
             
-            # Hikaye içeriği kontrolü
-            if not story_content or len(story_content.strip()) < 100:
-                logging.error(f"❌ Hikaye içeriği çok kısa veya boş! İçerik uzunluğu: {len(story_content) if story_content else 0}")
-                raise Exception("Hikaye içeriği yetersiz")
-            
-            logging.info(f"✅ Hikaye içeriği hazır ({len(story_content)} karakter)")
-            logging.info(f"✅ Kahraman profili hazır ({len(protagonist_profile)} karakter)")
-            
-            # Geçici dizin oluştur
             temp_dir = tempfile.mkdtemp(dir="/tmp")
             logging.info(f"📁 Geçici dizin oluşturuldu: {temp_dir}")
             
-            # Hikaye dosyasını kaydet
-            formatted_story_path = os.path.join(temp_dir, "hikaye.txt")
-            with open(formatted_story_path, "w", encoding="utf-8") as f:
-                f.write(formatted_text)
-            logging.info("💾 Hikaye dosyası kaydedildi")
-
-            # SES VE ALTYAZI ÜRETİMİ
+            # ADIM 2: SES VE ALTYAZI ÜRETİMİ
             logging.info("\n🎵 SES VE ALTYAZI ÜRETİM SÜRECİ BAŞLADI")
             logging.info("-" * 50)
-            audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, api_keys)
+            audio_file_path, srt_file_path = ses_uretici.run_audio_and_srt_process(formatted_text, temp_dir)
             logging.info("✅ Ses ve altyazı dosyaları hazır")
 
-            # PROFİL FOTOĞRAFI ÜRETİMİ
-            logging.info("\n📸 PROFİL FOTOĞRAFI ÜRETİM SÜRECİ BAŞLADI")
+            # GÜNCELLEME: Sabit varlıkları GCS'ten indiriyoruz.
+            logging.info("\n🎨 SABİT GÖRSEL VARLIKLAR İNDİRİLİYOR")
             logging.info("-" * 50)
-            original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(protagonist_profile, temp_dir)
-            logging.info("✅ Profil fotoğrafları oluşturuldu")
+            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+            
+            # Video için kullanılacak ana sunucu fotoğrafı
+            leo_photo_blob = kaynak_bucket.blob("leo_final.png")
+            leo_photo_path = os.path.join(temp_dir, "leo_final.png")
+            leo_photo_blob.download_to_filename(leo_photo_path)
+            logging.info("✅ 'leo_final.png' indirildi.")
 
-            # ARKAPLAN SİLME SÜRECİ
-            logging.info("\n🎨 ARKAPLAN SİLME SÜRECİ BAŞLADI")
-            logging.info("-" * 50)
-            cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(original_photo_path, temp_dir)
-            logging.info("✅ Profil fotoğrafı arkaplanı temizlendi")
+            # Küçük resim için kullanılacak özel fotoğraf
+            thumbnail_photo_blob = kaynak_bucket.blob("kucukresimicinfoto.png")
+            thumbnail_photo_path = os.path.join(temp_dir, "kucukresimicinfoto.png")
+            thumbnail_photo_blob.download_to_filename(thumbnail_photo_path)
+            logging.info("✅ 'kucukresimicinfoto.png' indirildi.")
 
-            # KÜÇÜK RESİM ÜRETİMİ
+            # ADIM 3: KÜÇÜK RESİM ÜRETİMİ
             logging.info("\n🖼️ KÜÇÜK RESİM ÜRETİM SÜRECİ BAŞLADI")
             logging.info("-" * 50)
-            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(formatted_text, thumbnail_photo_path, temp_dir, worker_project_id)
+            final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
+                story_text=formatted_text,
+                profile_photo_path=thumbnail_photo_path, # İndirilen özel fotoğrafı kullan
+                output_dir=temp_dir
+            )
             logging.info("✅ Küçük resim hazırlandı")
 
-            # ARKAPLAN VİDEOSU SEÇİMİ
+            # ADIM 4: ARKAPLAN VİDEOSU SEÇİMİ
             logging.info("\n🎬 ARKAPLAN VİDEOSU SEÇİM SÜRECİ BAŞLADI")
             logging.info("-" * 50)
             bg_video_path = get_random_background_video(storage_client, temp_dir)
 
-            # VİDEO OLUŞTURMA SÜRECİ
+            # ADIM 5: VİDEO OLUŞTURMA SÜRECİ
             logging.info("\n🎥 VİDEO OLUŞTURMA SÜRECİ BAŞLADI")
             logging.info("-" * 50)
-            final_video_path = videoyapar.run_video_creation(bg_video_path, audio_file_path, srt_file_path, cleaned_photo_path, protagonist_profile, temp_dir)
+            # Sabit "Leo" karakteri için sahte bir profil metni oluşturuyoruz
+            leo_profile_text = "Protagonist: Leo" 
+            final_video_path = videoyapar.run_video_creation(
+                bg_video_path=bg_video_path, 
+                audio_path=audio_file_path, 
+                srt_path=srt_file_path, 
+                profile_photo_path=leo_photo_path, # İndirilen Leo fotoğrafını kullan
+                protagonist_profile=leo_profile_text, # Sabit "Leo" adını kullan
+                output_dir=temp_dir
+            )
             logging.info("✅ Final video oluşturuldu")
 
-            # DOSYALARI YÜKLEME SÜRECİ
+            # ADIM 6: DOSYALARI YÜKLEME SÜRECİ
             logging.info("\n☁️ DOSYALARI GCS'E YÜKLEME SÜRECİ BAŞLADI")
             logging.info("-" * 50)
             
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
             safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
             
+            # GÜNCELLEME: Yüklenecek dosya listesi yeni stratejiye göre düzenlendi.
             files_to_upload = {
                 "nihai_video.mp4": final_video_path,
                 "kucuk_resim.png": final_thumbnail_path,
                 "altyazi.srt": srt_file_path,
                 "ses.wav": audio_file_path,
-                "hikaye.txt": formatted_story_path,
-                "profil_foto_temiz.png": cleaned_photo_path,
-                "profil_foto_orijinal.png": original_photo_path
+                "icerik.txt": os.path.join(temp_dir, "icerik.txt") # icerik_uretici'nin kaydettiği dosya
             }
             
             for filename, local_path in files_to_upload.items():
-                if os.path.exists(local_path):
+                if local_path and os.path.exists(local_path):
                     logging.info(f"📤 Yükleniyor: {filename}")
                     blob = cikti_bucket.blob(f"{safe_folder_name}/{filename}")
                     blob.upload_from_filename(local_path)
                     logging.info(f"✅ Yüklendi: {filename}")
                 else:
-                    logging.warning(f"⚠️ Dosya bulunamadı: {filename}")
+                    logging.warning(f"⚠️ Dosya bulunamadı, yükleme atlandı: {filename}")
             
             logging.info("=" * 80)
             logging.info(f"🎉🎉🎉 ÜRETİM BAŞARIYLA TAMAMLANDI: '{story_title}' 🎉🎉🎉")
@@ -301,4 +246,6 @@ def main_loop():
             time.sleep(5)
 
 if __name__ == "__main__":
+    # Bu scriptin doğrudan çalıştırılması, GCS ortamı dışında test amaçlıdır.
+    # Gerçek operasyon için bir VM üzerinde veya benzeri bir ortamda çalıştırılmalıdır.
     main_loop()
