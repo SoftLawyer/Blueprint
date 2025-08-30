@@ -11,8 +11,7 @@ from google.cloud import storage
 # Kendi modüllerimizi import edelim
 import hikayeuretir
 import googleilesesolustur
-import profilfotoolusturur
-import profilfotonunarkasinisiler
+# profilfotoolusturur ve profilfotonunarkasinisiler artık kullanılmıyor
 import videoyapar
 import kucukresimolusturur
 
@@ -23,8 +22,10 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
-CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
+# --- SABİT DEĞİŞKENLER (GÜNCELLENDİ) ---
+KAYNAK_BUCKET_ADI = "video-fabrikasi-kaynaklar"
+CIKTI_BUCKET_ADI = "video-fabrikasi-ciktilar"
+PROJECT_ID = "video-fabrikasi" 
 
 app = Flask(__name__)
 
@@ -32,118 +33,110 @@ app = Flask(__name__)
 def video_fabrikasi_baslat():
     """
     Bu fonksiyon, bir POST isteği aldığında tüm video üretim hattını tetikler.
-    Adım adım ilerler, her adımı loglar ve sonunda tüm çıktıları Cloud Storage'a yükler.
+    Bu artık ana çalışma yöntemi olmasa da, tutarlılık için güncellenmiştir.
     """
     temp_dir = tempfile.mkdtemp(dir="/tmp")
     logging.info(f"🚀 Yeni üretim süreci başlatıldı. Geçici klasör: {temp_dir}")
     
-    story_title = "" # Hata durumunda hangi başlığın hata verdiğini bilmek için
+    story_title = "" 
     
     try:
         # ==============================================================================
-        # ADIM 1 & 2: HİKAYE ÜRETİMİ
+        # ADIM 1: KONU SEÇİMİ (GCS'den)
         # ==============================================================================
-        logging.info("[ADIM 1/9] Konu seçiliyor ve hikaye oluşturuluyor...")
-        (
-            story_content,
-            story_title_from_module,
-            protagonist_profile,
-            api_keys,
-            formatted_text
-        ) = hikayeuretir.run_story_generation_process(KAYNAK_BUCKET_ADI, CIKTI_BUCKET_ADI)
-
-        story_title = story_title_from_module
-
-        if not story_title:
-            logging.warning("İşlenecek yeni konu bulunamadı. Üretim bandı durduruldu.")
+        storage_client = storage.Client()
+        kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+        titles_blob = kaynak_bucket.blob("creator_blueprint_titles.txt")
+        
+        if not titles_blob.exists():
+            logging.warning("İşlenecek yeni konu bulunamadı (creator_blueprint_titles.txt yok). Üretim bandı durduruldu.")
             return jsonify({"status": "finished", "message": "No new topics to process."}), 200
 
-        logging.info(f"✅ Hikaye başarıyla oluşturuldu. Başlık: '{story_title}'")
-        
-        formatted_story_path = os.path.join(temp_dir, "hikaye_formatli.txt")
-        with open(formatted_story_path, "w", encoding="utf-8") as f:
-            f.write(formatted_text)
-        logging.info(f"💾 Formatlanmış hikaye geçici olarak kaydedildi: {formatted_story_path}")
+        all_titles = titles_blob.download_as_text(encoding="utf-8").strip().splitlines()
+        if not all_titles:
+            logging.warning("İşlenecek yeni konu bulunamadı (dosya boş). Üretim bandı durduruldu.")
+            return jsonify({"status": "finished", "message": "No new topics to process."}), 200
+
+        story_title = all_titles[0]
+        remaining_titles = "\n".join(all_titles[1:])
+        titles_blob.upload_from_string(remaining_titles, content_type="text/plain; charset=utf-8")
+        logging.info(f"🔹 '{story_title}' başlığı GCS'den alındı.")
 
         # ==============================================================================
-        # ADIM 3 & 4: SESLENDİRME VE ALTYAZI
+        # ADIM 2: HİKAYE ÜRETİMİ
         # ==============================================================================
-        logging.info("[ADIM 3-4/9] Seslendirme ve senkronize altyazı üretimi başlıyor...")
+        logging.info("[ADIM 2/7] Hikaye oluşturuluyor...")
+        formatted_text = hikayeuretir.run_script_generation_process(PROJECT_ID, story_title)
+        if not formatted_text:
+            raise Exception(f"'{story_title}' için metin üretilemedi.")
+        logging.info(f"✅ Hikaye başarıyla oluşturuldu.")
+        
+        hikaye_path = os.path.join(temp_dir, "hikaye.txt")
+        with open(hikaye_path, "w", encoding="utf-8") as f:
+            f.write(formatted_text)
+        logging.info(f"💾 Hikaye geçici olarak kaydedildi.")
+
+        # ==============================================================================
+        # ADIM 3: SESLENDİRME VE ALTYAZI
+        # ==============================================================================
+        logging.info("[ADIM 3/7] Seslendirme ve altyazı üretimi başlıyor...")
         audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(
             story_text=formatted_text,
             output_dir=temp_dir,
-            api_keys_list=api_keys
+            project_id=PROJECT_ID
         )
-        if not audio_file_path or not srt_file_path:
-            raise Exception("Ses veya altyazı dosyası oluşturulamadı.")
         logging.info("✅ Ses ve altyazı başarıyla oluşturuldu.")
-
-        # ==============================================================================
-        # ADIM 5: PROFİL FOTOĞRAFI ÜRETİMİ
-        # ==============================================================================
-        logging.info("[ADIM 5/9] Profil fotoğrafı üretimi başlıyor...")
-        original_photo_path, thumbnail_photo_path = profilfotoolusturur.run_profile_photo_generation(
-            protagonist_profile=protagonist_profile,
-            output_dir=temp_dir
-        )
-        if not original_photo_path or not thumbnail_photo_path:
-            raise Exception("Profil fotoğrafı veya küçük resim için fotoğraf üretilemedi.")
-        logging.info("✅ Profil fotoğrafı ve küçük resim versiyonu başarıyla üretildi.")
-
-        # ==============================================================================
-        # ADIM 6: ARKA PLAN TEMİZLEME
-        # ==============================================================================
-        logging.info("[ADIM 6/9] Profil fotoğrafının arka planı temizleniyor...")
-        cleaned_photo_path = profilfotonunarkasinisiler.run_background_removal(
-            input_path=original_photo_path,
-            output_dir=temp_dir
-        )
-        if not cleaned_photo_path:
-            raise Exception("Profil fotoğrafının arka planı temizlenemedi.")
-        logging.info("✅ Arka plan başarıyla temizlendi.")
-
-        # ==============================================================================
-        # ADIM 7: VİDEO BİRLEŞTİRME
-        # ==============================================================================
-        logging.info("[ADIM 7/9] Video birleştirme işlemi başlıyor...")
         
-        storage_client = storage.Client()
-        kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-        bg_video_blob = kaynak_bucket.blob("arkaplan.mp4")
-        bg_video_path = os.path.join(temp_dir, "arkaplan.mp4")
-        bg_video_blob.download_to_filename(bg_video_path)
-        logging.info("✅ Arka plan videosu indirildi.")
+        # ==============================================================================
+        # ADIM 4: GEREKLİ GÖRSEL VARLIKLARI İNDİRME
+        # ==============================================================================
+        logging.info("[ADIM 4/7] Gerekli görseller indiriliyor...")
+        
+        # Profil fotoğrafı
+        leo_photo_blob = kaynak_bucket.blob("leo_final.png")
+        leo_photo_path = os.path.join(temp_dir, "leo_final.png")
+        leo_photo_blob.download_to_filename(leo_photo_path)
+        
+        # Thumbnail fotoğrafı
+        thumbnail_photo_blob = kaynak_bucket.blob("kucukresimicinfoto.png")
+        thumbnail_photo_path = os.path.join(temp_dir, "kucukresimicinfoto.png")
+        thumbnail_photo_blob.download_to_filename(thumbnail_photo_path)
+        
+        logging.info("✅ Gerekli görseller indirildi.")
+
+        # ==============================================================================
+        # ADIM 5: YOUTUBE KÜÇÜK RESMİ OLUŞTURMA
+        # ==============================================================================
+        logging.info("[ADIM 5/7] YouTube küçük resmi oluşturuluyor...")
+        final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
+            story_text=formatted_text,
+            profile_photo_path=thumbnail_photo_path,
+            output_dir=temp_dir,
+            worker_project_id=PROJECT_ID
+        )
+        logging.info("✅ YouTube küçük resmi başarıyla oluşturuldu.")
+        
+        # ==============================================================================
+        # ADIM 6: VİDEO BİRLEŞTİRME
+        # ==============================================================================
+        logging.info("[ADIM 6/7] Video birleştirme işlemi başlıyor...")
+        
+        # Arka plan videosu indirme
+        bg_video_path = get_random_background_video(storage_client, temp_dir)
 
         final_video_path = videoyapar.run_video_creation(
             bg_video_path=bg_video_path,
             audio_path=audio_file_path,
             srt_path=srt_file_path,
-            profile_photo_path=cleaned_photo_path,
-            protagonist_profile=protagonist_profile,
+            profile_photo_path=leo_photo_path,
             output_dir=temp_dir
         )
-        if not final_video_path:
-            raise Exception("Nihai video dosyası oluşturulamadı.")
         logging.info("✅ Video başarıyla birleştirildi.")
 
         # ==============================================================================
-        # ADIM 8: YOUTUBE KÜÇÜK RESMİ OLUŞTURMA
+        # ADIM 7: PAKETLEME VE TESLİMAT (CLOUD STORAGE'A YÜKLEME)
         # ==============================================================================
-        logging.info("[ADIM 8/9] YouTube küçük resmi oluşturuluyor...")
-        final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
-            story_text=formatted_text,
-            profile_photo_path=thumbnail_photo_path,
-            output_dir=temp_dir,
-            api_keys=api_keys
-        )
-        if not final_thumbnail_path:
-            raise Exception("YouTube küçük resmi oluşturulamadı.")
-        logging.info("✅ YouTube küçük resmi başarıyla oluşturuldu.")
-
-        # ==============================================================================
-        # ADIM 9: PAKETLEME VE TESLİMAT (CLOUD STORAGE'A YÜKLEME)
-        # ==============================================================================
-        logging.info("[ADIM 9/9] Üretilen dosyalar Cloud Storage'a yükleniyor...")
+        logging.info("[ADIM 7/7] Üretilen dosyalar Cloud Storage'a yükleniyor...")
         cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
         safe_folder_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in story_title)
 
@@ -152,9 +145,7 @@ def video_fabrikasi_baslat():
             "kucuk_resim.png": final_thumbnail_path,
             "altyazi.srt": srt_file_path,
             "ses.wav": audio_file_path,
-            "hikaye.txt": formatted_story_path,
-            "profil_foto_temiz.png": cleaned_photo_path,
-            "profil_foto_orijinal.png": original_photo_path
+            "hikaye.txt": hikaye_path
         }
 
         for filename, local_path in files_to_upload.items():
@@ -163,13 +154,10 @@ def video_fabrikasi_baslat():
                 blob = cikti_bucket.blob(blob_path)
                 blob.upload_from_filename(local_path)
                 logging.info(f"  -> Yüklendi: {blob_path}")
-            else:
-                logging.warning(f"  -> ATLANDI: {local_path} bulunamadı.")
         
         logging.info("✅ Tüm dosyalar başarıyla Cloud Storage'a yüklendi.")
 
-        # BAŞARILI SONUÇ
-        logging.info("🎉🎉🎉 ÜRETİM BANDI BAŞARIYLA TAMAMLANDI! 🎉🎉�")
+        logging.info("🎉🎉🎉 ÜRETİM BANDI BAŞARIYLA TAMAMLANDI! 🎉🎉🎉")
         return jsonify({
             "status": "success",
             "message": f"Video for '{story_title}' was successfully generated and uploaded.",
@@ -190,6 +178,22 @@ def video_fabrikasi_baslat():
             shutil.rmtree(temp_dir)
             logging.info(f"🧹 Geçici klasör temizlendi: {temp_dir}")
 
+def get_random_background_video(storage_client, temp_dir):
+    try:
+        bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+        blobs = list(bucket.list_blobs(prefix="arkaplan_videolari/"))
+        video_blobs = [b for b in blobs if b.name.endswith(".mp4") and b.size > 0]
+        if not video_blobs:
+            raise FileNotFoundError("'arkaplan_videolari' klasöründe video bulunamadı.")
+        random_blob = random.choice(video_blobs)
+        bg_video_path = os.path.join(temp_dir, os.path.basename(random_blob.name))
+        random_blob.download_to_filename(bg_video_path)
+        return bg_video_path
+    except Exception as e:
+        logging.error(f"❌ Arka plan videosu indirilirken hata: {e}")
+        raise
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
+

@@ -1,4 +1,4 @@
-# worker.py (v13 - Rastgele Arka Plan Video Seçimi)
+# worker.py (v15 - Nihai Sürüm)
 
 import os
 import logging
@@ -27,15 +27,17 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# --- SABİT DEĞİŞKENLER ---
-KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
-CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
-HATA_BUCKET_ADI = "video-fabrikam-hatalar"
-IDLE_SHUTDOWN_SECONDS = 300  # 5 dakika
+# --- SABİT DEĞİŞKENLER (GÜNCELLENDİ) ---
+KAYNAK_BUCKET_ADI = "video-fabrikasi-kaynaklar"
+CIKTI_BUCKET_ADI = "video-fabrikasi-ciktilar"
+HATA_BUCKET_ADI = "video-fabrikasi-hatalar"
+IDLE_SHUTDOWN_SECONDS = 600  # 10 dakika
 PROJECT_ID = "video-fabrikasi" # Proje ID'niz buraya sabitlendi
 
-# --- Yardımcı Fonksiyonlar ---
+# --- YARDIMCI FONKSİYONLAR ---
+
 def get_metadata(metadata_path):
+    """VM metadata sunucusundan bilgi alır."""
     try:
         response = requests.get(
             f"http://metadata.google.internal/computeMetadata/v1/{metadata_path}",
@@ -48,7 +50,8 @@ def get_metadata(metadata_path):
         return None
 
 def shutdown_instance_group():
-    logging.warning("🔴 10 dakikadır boşta. Kapatma prosedürü başlatılıyor...")
+    """Boşta kalan instance grubunu kapatır."""
+    logging.warning(f"🔴 {IDLE_SHUTDOWN_SECONDS / 60:.0f} dakikadır boşta. Kapatma prosedürü başlatılıyor...")
     try:
         zone_full = get_metadata("instance/zone")
         instance_name = get_metadata("instance/name")
@@ -56,45 +59,39 @@ def shutdown_instance_group():
             logging.error("❌ Zone veya instance adı alınamadığı için kapatma işlemi iptal edildi.")
             return
         zone = zone_full.split('/')[-1]
-        if "fabrika-isci" in instance_name:
-            group_name = "video-fabrikasi-grubu"
-            command = ["gcloud", "compute", "instance-groups", "managed", "resize", group_name, "--size=0", f"--zone={zone}", "--quiet"]
-            subprocess.run(command, check=True)
-            logging.info(f"✅ {group_name} başarıyla kapatıldı.")
+        # Instance adından grup adını tahmin et
+        if "-group-" in instance_name:
+             group_name = instance_name.rsplit("-group-", 1)[0] + "-group"
+        else: # Standart isimlendirme
+             group_name = instance_name.rsplit('-', 1)[0]
+
+        logging.info(f"Kapatılacak grup adı: {group_name}, Bölge: {zone}")
+        command = ["gcloud", "compute", "instance-groups", "managed", "resize", group_name, "--size=0", f"--zone={zone}", "--quiet"]
+        subprocess.run(command, check=True)
+        logging.info(f"✅ {group_name} başarıyla kapatıldı.")
     except Exception as e:
-        logging.error(f"❌ Instance grubunu kapatırken hata oluştu: {e}")
+        logging.error(f"❌ Instance grubunu kapatırken hata oluştu: {e}", exc_info=True)
 
 def get_random_background_video(storage_client, temp_dir):
-    """
-    Cloud Storage'dan rastgele bir arka plan videosu seçer ve indirir.
-    """
+    """Cloud Storage'dan rastgele bir arka plan videosu seçer ve indirir."""
     try:
         bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-        # 'arkaplan_videolari/' klasöründeki tüm dosyaları listele
         blobs = list(bucket.list_blobs(prefix="arkaplan_videolari/"))
-        
-        # Klasörün boş olup olmadığını kontrol et (.mp4 dosyalarını filtrele)
-        video_blobs = [b for b in blobs if b.name.endswith(".mp4") and b.size > 0]
+        video_blobs = [b for b in blobs if b.name.lower().endswith((".mp4", ".mov")) and b.size > 0]
         if not video_blobs:
-            logging.error("❌ 'arkaplan_videolari' klasöründe hiç .mp4 video bulunamadı!")
-            raise FileNotFoundError("Arka plan videosu bulunamadı.")
-            
-        # Rastgele bir video seç
+            raise FileNotFoundError(f"'{KAYNAK_BUCKET_ADI}/arkaplan_videolari/' klasöründe video bulunamadı.")
         random_blob = random.choice(video_blobs)
         logging.info(f"📹 Rastgele arka plan videosu seçildi: {random_blob.name}")
-        
-        # Videoyu indir
-        file_name = os.path.basename(random_blob.name)
-        bg_video_path = os.path.join(temp_dir, file_name)
+        bg_video_path = os.path.join(temp_dir, os.path.basename(random_blob.name))
         random_blob.download_to_filename(bg_video_path)
         logging.info(f"✅ Arka plan videosu indirildi: {bg_video_path}")
-        
         return bg_video_path
     except Exception as e:
         logging.error(f"❌ Arka plan videosu seçilirken/indirilirken hata oluştu: {e}")
         raise
 
 def log_error_to_gcs(storage_client, bucket_name, title, error_details):
+    """Hata detaylarını GCS'e loglar."""
     instance_name = get_metadata("instance/name") or "unknown-instance"
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_content = (
@@ -127,8 +124,22 @@ def main_loop():
         try:
             logging.info("\n🔍 Yeni video konusu aranıyor...")
             
-            # ADIM 1: İÇERİK ÜRETİMİ
-            formatted_text, story_title = hikayeuretir.run_script_generation_process_for_worker(PROJECT_ID)
+            # ADIM 1: GCS'den işlenecek konuyu al
+            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
+            titles_blob = kaynak_bucket.blob("creator_blueprint_titles.txt")
+            if not titles_blob.exists():
+                logging.warning(f"{KAYNAK_BUCKET_ADI}/creator_blueprint_titles.txt bulunamadı. Boşta bekleniyor.")
+                all_titles = []
+            else:
+                all_titles = titles_blob.download_as_text(encoding="utf-8").strip().splitlines()
+
+            if not all_titles:
+                story_title = None
+            else:
+                story_title = all_titles[0]
+                remaining_titles = "\n".join(all_titles[1:])
+                titles_blob.upload_from_string(remaining_titles, content_type="text/plain; charset=utf-8")
+                logging.info(f"🔹 '{story_title}' başlığı GCS'den alındı. Kalan başlık sayısı: {len(all_titles) - 1}")
 
             if not story_title:
                 if idle_start_time is None:
@@ -140,23 +151,24 @@ def main_loop():
                 time.sleep(60)
                 continue
             
-            idle_start_time = None
+            idle_start_time = None # İş bulunduğu için sayacı sıfırla
             logging.info(f"🎯 YENİ VİDEO BAŞLADI: '{story_title}'")
             logging.info("=" * 80)
+
+            # ADIM 2: HİKAYE METNİNİ ÜRET
+            formatted_text = hikayeuretir.run_script_generation_process(PROJECT_ID, story_title)
+            if not formatted_text:
+                 raise Exception(f"'{story_title}' için metin üretilemedi.")
             
             temp_dir = tempfile.mkdtemp(dir="/tmp")
             logging.info(f"📁 Geçici dizin oluşturuldu: {temp_dir}")
-
             hikaye_path = os.path.join(temp_dir, "hikaye.txt")
-            with open(hikaye_path, "w", encoding="utf-8") as f:
-                f.write(formatted_text)
+            with open(hikaye_path, "w", encoding="utf-8") as f: f.write(formatted_text)
             
-            # ADIM 2: SES VE ALTYAZI ÜRETİMİ
+            # ADIM 3: SES VE ALTYAZI ÜRET
             audio_file_path, srt_file_path = googleilesesolustur.run_audio_and_srt_process(formatted_text, temp_dir, PROJECT_ID)
 
-            # ADIM 3: GEREKLİ GÖRSEL VARLIKLARI İNDİRME
-            kaynak_bucket = storage_client.bucket(KAYNAK_BUCKET_ADI)
-            
+            # ADIM 4: GEREKLİ GÖRSEL VARLIKLARI İNDİR
             leo_photo_blob = kaynak_bucket.blob("leo_final.png")
             leo_photo_path = os.path.join(temp_dir, "leo_final.png")
             leo_photo_blob.download_to_filename(leo_photo_path)
@@ -167,7 +179,7 @@ def main_loop():
             thumbnail_photo_blob.download_to_filename(thumbnail_photo_path)
             logging.info("✅ 'kucukresimicinfoto.png' (thumbnail için) indirildi.")
 
-            # ADIM 4: KÜÇÜK RESİM ÜRETİMİ
+            # ADIM 5: KÜÇÜK RESİM ÜRET
             final_thumbnail_path = kucukresimolusturur.run_thumbnail_generation(
                 story_text=formatted_text,
                 profile_photo_path=thumbnail_photo_path,
@@ -175,10 +187,10 @@ def main_loop():
                 worker_project_id=PROJECT_ID
             )
 
-            # ADIM 5: RASTGELE ARKAPLAN VİDEOSU SEÇİMİ
+            # ADIM 6: RASTGELE ARKAPLAN VİDEOSU SEÇ
             bg_video_path = get_random_background_video(storage_client, temp_dir)
 
-            # ADIM 6: VİDEO OLUŞTURMA SÜRECİ
+            # ADIM 7: VİDEOYU OLUŞTUR
             final_video_path = videoyapar.run_video_creation(
                 bg_video_path=bg_video_path, 
                 audio_path=audio_file_path, 
@@ -187,7 +199,7 @@ def main_loop():
                 output_dir=temp_dir
             )
 
-            # ADIM 7: DOSYALARI YÜKLEME SÜRECİ
+            # ADIM 8: ÜRETİLEN DOSYALARI YÜKLE
             cikti_bucket = storage_client.bucket(CIKTI_BUCKET_ADI)
             safe_folder_name = "".join(c for c in story_title if c.isalnum() or c in " -_").rstrip()
             
