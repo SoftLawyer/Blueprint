@@ -6,29 +6,28 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
 # Adım 3: Gerekli tüm sistem programlarını, FONT'ları ve video kütüphanelerini kur
-# Bu blok, sanal makinede başarıyla uyguladığımız nihai kurulum adımlarını içerir.
 RUN apt-get update && \
-    # Debian'ın paket kaynak listesini contrib ve non-free depolarını içerecek şekilde düzenle
-    sed -i 's/ main/ main contrib non-free/g' /etc/apt/sources.list && \
+    sed -i 's/Components: main/Components: main contrib non-free/g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
-    # Microsoft fontları için lisans sözleşmesini otomatik olarak kabul et
     echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections && \
-    # Gerekli tüm paketleri kur
+    # Gerekli tüm paketleri kur (rustc ve cargo, whisper kurulumu için eklendi)
     apt-get install -y --no-install-recommends \
     ffmpeg \
     imagemagick \
     git \
+    rustc \
+    cargo \
     ttf-mscorefonts-installer \
     fonts-liberation \
     fontconfig \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     && \
     # İndirilen paket listelerini temizle
     rm -rf /var/lib/apt/lists/*
 
-# Adım 4: ImageMagick'in güvenlik politikasını düzenle (Nihai Çözüm)
-RUN sed -i 's/rights="none"/rights="read|write"/g' /etc/ImageMagick-6/policy.xml
+# Adım 4: ImageMagick'in güvenlik politikasını düzenle (Sürüme duyarsız hale getirildi)
+RUN sed -i 's/rights="none"/rights="read|write"/g' /etc/ImageMagick-*/policy.xml
 
 # Adım 5: Yüklenen yeni fontları sisteme tanıt
 RUN fc-cache -f -v
@@ -37,9 +36,7 @@ RUN fc-cache -f -v
 WORKDIR /app
 
 # Adım 7: Gerekli Python kütüphanelerini kur
-# Önce requirements.txt dosyasını kopyala
 COPY requirements.txt .
-# Sanal ortam oluştur ve kütüphaneleri içine kur
 RUN python3 -m venv venv
 RUN venv/bin/pip install --no-cache-dir --upgrade pip
 RUN venv/bin/pip install --no-cache-dir -r requirements.txt
@@ -48,6 +45,5 @@ RUN venv/bin/pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Adım 9: Uygulamayı çalıştır
-# GÜNCELLEME: Artık bir web sunucusu (gunicorn) yerine,
-# doğrudan video üreten worker script'ini başlatıyoruz.
 CMD ["/app/venv/bin/python", "worker.py"]
+

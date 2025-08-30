@@ -1,11 +1,16 @@
 #!/bin/bash
 set -e
 
-# /opt/app klasörüne git
-cd /opt/app
+# Proje klasörüne git, eğer yoksa GitHub'dan indir
+cd /
+if [ ! -d "Blueprint" ]; then
+    git clone [https://github.com/SoftLawyer/Blueprint.git](https://github.com/SoftLawyer/Blueprint.git)
+fi
+cd Blueprint
 
-# Kodun en son halini çek (isteğe bağlı ama önerilir)
-sudo git pull
+# En güncel kodu çek
+git pull
 
-# Worker'ı çalıştır. Çıktıları log dosyasına yaz.
-sudo venv/bin/python worker.py >> /var/log/worker.log 2>&1 &
+# Önceden kurulmuş olan Python sanal ortamını aktifleştir ve worker'ı çalıştır
+source venv/bin/activate
+python3 worker.py
