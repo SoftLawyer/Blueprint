@@ -4,18 +4,18 @@ import time
 import re
 import random
 import logging
-from typing import Union
+from typing import Union, Tuple, List, Optional
 
 # --- Global Değişkenler ---
 # Bu değişkenler, modülün o anki oturumda kullandığı API anahtarlarını,
 # sıradaki anahtarın hangisi olduğunu ve yapılandırılmış Gemini modelini tutar.
-API_KEYS = []
-current_api_key_index = 0
-model = None
+API_KEYS: List[str] = []
+current_api_key_index: int = 0
+model: Optional[genai.GenerativeModel] = None
 
 # --- Gemini API Entegrasyon Fonksiyonları ---
 
-def initialize_gemini(api_keys_list: list):
+def initialize_gemini(api_keys_list: List[str]) -> bool:
     """
     Ana yönetici (worker.py) tarafından çağrılır.
     Secret Manager'dan alınan API anahtar listesi ile Gemini'yi başlatır.
@@ -30,7 +30,7 @@ def initialize_gemini(api_keys_list: list):
     # İlk anahtarla yapılandırmayı dene
     return configure_gemini() is not None
 
-def configure_gemini():
+def configure_gemini() -> Optional[genai.GenerativeModel]:
     """
     Sıradaki API anahtarını kullanarak Gemini modelini yapılandırır.
     Bir anahtar başarısız olursa, listedeki bir sonrakini dener.
@@ -121,7 +121,7 @@ class CreatorsBlueprintGenerator:
             6: {"name": "The Blueprint Summary & CTA", "words": 150, "task": "Provide a concise summary and a clear call to action."}
         }
 
-    def get_and_process_next_title(self, titles_list: list) -> tuple[Union[str, None], list]:
+    def get_and_process_next_title(self, titles_list: List[str]) -> Tuple[Union[str, None], List[str]]:
         """
         Verilen başlık listesinin en üstündeki başlığı işler.
         İşlenen başlığı ve geriye kalan başlıkların olduğu yeni listeyi döndürür.
@@ -136,7 +136,7 @@ class CreatorsBlueprintGenerator:
         logging.info(f"🔹 Sıradaki başlık: '{title_to_process}'. Listede kalan: {len(remaining_titles)}")
         return title_to_process, remaining_titles
 
-    def generate_full_script(self, video_title: str) -> Union[str, None]:
+    def generate_full_script(self, video_title: str) -> Optional[str]:
         """
         Verilen bir başlık için, script_structure'ı takip ederek tam bir video metni üretir.
         """
@@ -181,7 +181,7 @@ CRITICAL INSTRUCTIONS:
         logging.info(f"--- '{video_title}' için metin üretimi başarıyla tamamlandı ---")
         return final_script
 
-    def format_script_for_saving(self, script: str, title: str) -> Union[str, None]:
+    def format_script_for_saving(self, script: str, title: str) -> Optional[str]:
         """
         Üretilen metni, video hakkında bilgiler içeren bir başlık bloğuyla formatlar.
         """
@@ -196,7 +196,7 @@ CRITICAL INSTRUCTIONS:
         return "\n".join(header) + script
 
 # --- ANA FONKSİYON (worker.py tarafından çağrılır) ---
-def run_script_generation_process(api_keys: list, title_list: list) -> tuple[str | None, str | None, list]:
+def run_script_generation_process(api_keys: List[str], title_list: List[str]) -> Tuple[Optional[str], Optional[str], List[str]]:
     """
     Tüm hikaye üretim sürecini yönetir.
     
@@ -236,7 +236,7 @@ def run_script_generation_process(api_keys: list, title_list: list) -> tuple[str
     # Başarılı metni formatla
     formatted_script = generator.format_script_for_saving(script_content, video_title)
     if not formatted_script:
-        logging.error("❌ Üretilen metin formatlanamadı.")
+        logging.error("❌ Metin formatlanamadı.")
         return None, video_title, remaining_titles
 
     logging.info(f"✅ '{video_title}' için tüm işlemler başarıyla tamamlandı.")
