@@ -55,7 +55,7 @@ def configure_gemini() -> Optional[genai.GenerativeModel]:
         }
         # Daha modern ve verimli bir model kullanıyoruz
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash-latest",
+            model_name="gemini-2.5-pro",
             generation_config=generation_config
         )
         logging.info(f"✅ Gemini API anahtarı {current_api_key_index + 1} başarıyla yapılandırıldı.")
