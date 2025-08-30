@@ -31,7 +31,7 @@ logging.basicConfig(
 KAYNAK_BUCKET_ADI = "video-fabrikam-kaynaklar"
 CIKTI_BUCKET_ADI = "video-fabrikam-ciktilar"
 HATA_BUCKET_ADI = "video-fabrikam-hatalar"
-IDLE_SHUTDOWN_SECONDS = 600  # 10 dakika
+IDLE_SHUTDOWN_SECONDS = 300  # 10 dakika
 PROJECT_ID = "video-fabrikasi" # Proje ID'niz buraya sabitlendi
 
 # --- Yardımcı Fonksiyonlar ---
