@@ -242,4 +242,3 @@ def run_script_generation_process(api_keys: List[str], title_list: List[str]) ->
     logging.info(f"✅ '{video_title}' için tüm işlemler başarıyla tamamlandı.")
     # Formatlanmış metni, işlenen başlığı ve güncel başlık listesini worker'a döndür
     return formatted_script, video_title, remaining_titles
-
