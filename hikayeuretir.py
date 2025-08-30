@@ -4,6 +4,7 @@ import time
 import re
 import random
 import logging
+from typing import Union
 
 # --- Global Değişkenler ---
 # Bu değişkenler, modülün o anki oturumda kullandığı API anahtarlarını,
@@ -120,7 +121,7 @@ class CreatorsBlueprintGenerator:
             6: {"name": "The Blueprint Summary & CTA", "words": 150, "task": "Provide a concise summary and a clear call to action."}
         }
 
-    def get_and_process_next_title(self, titles_list: list) -> tuple[str | None, list]:
+    def get_and_process_next_title(self, titles_list: list) -> tuple[Union[str, None], list]:
         """
         Verilen başlık listesinin en üstündeki başlığı işler.
         İşlenen başlığı ve geriye kalan başlıkların olduğu yeni listeyi döndürür.
@@ -135,7 +136,7 @@ class CreatorsBlueprintGenerator:
         logging.info(f"🔹 Sıradaki başlık: '{title_to_process}'. Listede kalan: {len(remaining_titles)}")
         return title_to_process, remaining_titles
 
-    def generate_full_script(self, video_title: str) -> str | None:
+    def generate_full_script(self, video_title: str) -> Union[str, None]:
         """
         Verilen bir başlık için, script_structure'ı takip ederek tam bir video metni üretir.
         """
@@ -180,7 +181,7 @@ CRITICAL INSTRUCTIONS:
         logging.info(f"--- '{video_title}' için metin üretimi başarıyla tamamlandı ---")
         return final_script
 
-    def format_script_for_saving(self, script: str, title: str) -> str | None:
+    def format_script_for_saving(self, script: str, title: str) -> Union[str, None]:
         """
         Üretilen metni, video hakkında bilgiler içeren bir başlık bloğuyla formatlar.
         """

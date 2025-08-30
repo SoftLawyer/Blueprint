@@ -1,16 +1,25 @@
 #!/bin/bash
 set -e
 
-# Proje klasörüne git, eğer yoksa GitHub'dan indir
+# Proje klasörüne git, yoksa GitHub'dan indir
 cd /
 if [ ! -d "Blueprint" ]; then
-    git clone [https://github.com/SoftLawyer/Blueprint.git](https://github.com/SoftLawyer/Blueprint.git)
+    git clone https://github.com/SoftLawyer/Blueprint.git
 fi
 cd Blueprint
 
 # En güncel kodu çek
 git pull
 
-# Önceden kurulmuş olan Python sanal ortamını aktifleştir ve worker'ı çalıştır
-source venv/bin/activate
-python3 worker.py
+# Python sanal ortamını aktifleştir, yoksa oluştur
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+else
+    source venv/bin/activate
+fi
+
+# Worker'ı arka planda başlat ve tüm çıktıları log dosyasına yönlendir
+nohup python3 worker.py >> /var/log/worker.log 2>&1 &
